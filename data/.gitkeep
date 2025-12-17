@@ -1,0 +1,3 @@
+# This file keeps the data directory in git
+# Actual data files are ignored
+aihirebox_company_list_n1_sample.csv

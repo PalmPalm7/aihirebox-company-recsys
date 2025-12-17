@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.pyc
+
+# Virtual environments
+.venv/
+venv/
+
+# Environment variables
+.env
+
+# macOS
+.DS_Store
+
+# Data folder - ignore all except sample file
+data/*
+!data/.gitkeep
+
+# Output folder - ignore all contents
+output/*
+!output/.gitkeep
