@@ -139,10 +139,25 @@ cid_0,Apex Context,ai_llm|content_media,b2c|saas,global,early,llm_foundation|aig
 
 | Model | Web Search | Description |
 |-------|------------|-------------|
-| `openai/gpt-4o-mini` | ✗ | Baseline model |
-| `openai/gpt-4o-mini:online` | ✓ | With web search for team_background (default) |
+| `openai/gpt-4o-mini` | ✗ | Default baseline model |
+| `openai/gpt-4o-mini:online` | ✓ | Default web search for team_background (default) |
 
-### Usage
+### Other models I recommend
+* "openai/gpt-oss-120b"
+* "openai/gpt-oss-120b:online"
+* "openai/gpt-5-mini"
+* "openai/gpt-5-mini:online"
+* "google/gemini-2.5-flash"
+* "google/gemini-2.5-flash:online"
+
+### Production Level Usage
+
+```bash
+# Uses the most cost-efficient method to produce company tags. Trimming post-mortem reasonings and reducing logs.
+python run_tagging.py data/aihirebox_company_list.csv --model openai/gpt-5-mini:online --quiet --no-reasoning --output-dir ./output_production
+```
+
+### Usages for Human Review
 
 ```bash
 # Basic usage with default model (openai/gpt-4o-mini:online)
