@@ -12,15 +12,13 @@ venv/
 # macOS
 .DS_Store
 
-# Data folder - ignore all except sample file
+# Data folder - ignore all except sample files
 data/*
-!data/.gitkeep
 !data/aihirebox_company_list_sample.csv
 !data/aihirebox_company_list_n1_sample.csv
 
 # Output folder - ignore all contents
 output/*
-!output/.gitkeep
 
 # Test folder - ignore test data contents
 tests/fixtures/*
