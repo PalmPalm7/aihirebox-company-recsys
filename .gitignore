@@ -15,6 +15,8 @@ venv/
 # Data folder - ignore all except sample file
 data/*
 !data/.gitkeep
+!data/aihirebox_company_list_sample.csv
+!data/aihirebox_company_list_n1_sample.csv
 
 # Output folder - ignore all contents
 output/*
