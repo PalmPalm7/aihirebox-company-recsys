@@ -297,14 +297,17 @@ class CompanyEmbedder:
             try:
                 embeddings, tokens = self._make_request(text_batch)
                 self._total_tokens += tokens
-                tokens_per_item = tokens // len(text_batch)
-                
-                for company, embedding in zip(company_batch, embeddings):
+                n_items = len(text_batch)
+                base_tokens = tokens // n_items
+                remainder_tokens = tokens % n_items
+
+                for idx, (company, embedding) in enumerate(zip(company_batch, embeddings)):
+                    item_tokens = base_tokens + (1 if idx < remainder_tokens else 0)
                     results.append(CompanyEmbedding(
                         company_id=company.company_id,
                         company_name=company.company_name,
                         embedding=embedding,
-                        token_count=tokens_per_item,
+                        token_count=item_tokens,
                     ))
                     
             except Exception as e:
