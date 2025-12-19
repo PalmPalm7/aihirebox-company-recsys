@@ -172,7 +172,15 @@ def load_company_ids_from_json(json_path: Path) -> List[str]:
     elif isinstance(data, dict) and "company_ids" in data:
         return data["company_ids"]
     else:
-        raise ValueError("Invalid JSON format. Expected list or dict with 'company_ids' key.")
+        actual_type = type(data).__name__
+        extra_info = ""
+        if isinstance(data, dict):
+            keys = ", ".join(map(str, data.keys()))
+            extra_info = f" Available keys: {keys}" if keys else " No keys present."
+        raise ValueError(
+            f"Invalid JSON format in '{json_path}'. Expected list or dict with 'company_ids' key, "
+            f"but got {actual_type}.{extra_info}"
+        )
 
 
 def save_run_metadata(
