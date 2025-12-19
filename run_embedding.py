@@ -67,7 +67,7 @@ Examples:
   python run_embedding.py data/aihirebox_company_list.csv --company-ids cid_0 cid_1 cid_2
 
   # Process companies from JSON file
-  python run_embedding.py data/aihirebox_company_list.csv --company-ids-json my_companies.json
+  python run_embedding.py data/aihirebox_company_list.csv --company-ids-json data/my_companies.json
 
   # Limit number for testing
   python run_embedding.py data/aihirebox_company_list.csv --limit 10
