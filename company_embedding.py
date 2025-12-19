@@ -200,9 +200,12 @@ class CompanyEmbedder:
                 embeddings, tokens = self._make_request(batch)
                 self._total_tokens += tokens
                 
-                # Distribute tokens evenly for per-item tracking
-                tokens_per_item = tokens // len(batch)
-                for emb in embeddings:
+                # Distribute tokens evenly for per-item tracking,
+                # assigning any remainder to the first few items
+                base_tokens = tokens // len(batch)
+                remainder = tokens % len(batch)
+                for idx, emb in enumerate(embeddings):
+                    tokens_per_item = base_tokens + (1 if idx < remainder else 0)
                     results.append((emb, tokens_per_item))
                     
             except Exception as e:
