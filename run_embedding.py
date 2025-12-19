@@ -67,7 +67,7 @@ Examples:
   python run_embedding.py data/aihirebox_company_list.csv --company-ids cid_0 cid_1 cid_2
 
   # Process companies from JSON file
-  python run_embedding.py data/aihirebox_company_list.csv --company-ids-json my_companies.json
+  python run_embedding.py data/aihirebox_company_list.csv --company-ids-json data/my_companies.json
 
   # Limit number for testing
   python run_embedding.py data/aihirebox_company_list.csv --limit 10
@@ -172,7 +172,15 @@ def load_company_ids_from_json(json_path: Path) -> List[str]:
     elif isinstance(data, dict) and "company_ids" in data:
         return data["company_ids"]
     else:
-        raise ValueError("Invalid JSON format. Expected list or dict with 'company_ids' key.")
+        actual_type = type(data).__name__
+        extra_info = ""
+        if isinstance(data, dict):
+            keys = ", ".join(map(str, data.keys()))
+            extra_info = f" Available keys: {keys}" if keys else " No keys present."
+        raise ValueError(
+            f"Invalid JSON format in '{json_path}'. Expected list or dict with 'company_ids' key, "
+            f"but got {actual_type}.{extra_info}"
+        )
 
 
 def save_run_metadata(
@@ -284,6 +292,12 @@ def main() -> int:
     if not args.no_checkpoint:
         checkpoint_path = args.output_dir / ".checkpoint.json"
         if not args.resume and checkpoint_path.exists():
+            if not args.quiet:
+                print(
+                    f"Warning: Existing checkpoint found at {checkpoint_path} and it will be deleted. "
+                    "Use --resume to continue from it.",
+                    file=sys.stderr,
+                )
             checkpoint_path.unlink()  # Remove old checkpoint if not resuming
     
     # Initialize embedder

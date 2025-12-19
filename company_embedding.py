@@ -151,7 +151,7 @@ class CompanyEmbedder:
             
         except requests.exceptions.RequestException as e:
             if retries > 0:
-                delay = RETRY_DELAY * (MAX_RETRIES - retries + 1)
+                delay = RETRY_DELAY * (2 ** (MAX_RETRIES - retries))
                 time.sleep(delay)
                 return self._make_request(texts, retries - 1)
             raise Exception(f"API request failed after {MAX_RETRIES} retries: {str(e)}")
@@ -200,13 +200,18 @@ class CompanyEmbedder:
                 embeddings, tokens = self._make_request(batch)
                 self._total_tokens += tokens
                 
-                # Distribute tokens evenly for per-item tracking
-                tokens_per_item = tokens // len(batch)
-                for emb in embeddings:
+                # Distribute tokens evenly for per-item tracking,
+                # assigning any remainder to the first few items
+                base_tokens = tokens // len(batch)
+                remainder = tokens % len(batch)
+                for idx, emb in enumerate(embeddings):
+                    tokens_per_item = base_tokens + (1 if idx < remainder else 0)
                     results.append((emb, tokens_per_item))
                     
             except Exception as e:
                 # On batch failure, add empty results with error
+                import logging
+                logging.warning(f"Batch embedding failed: {str(e)}")
                 for _ in batch:
                     results.append(([], 0))
         
@@ -284,27 +289,27 @@ class CompanyEmbedder:
         
         iterator = batches
         if show_progress:
-            processed_batches = len(results) // self.batch_size if results else 0
-            total_batches = processed_batches + len(batches)
             iterator = tqdm(
                 batches, 
                 desc=f"Embedding ({self.model})",
-                initial=processed_batches,
-                total=total_batches,
             )
         
         for company_batch, text_batch in iterator:
             try:
                 embeddings, tokens = self._make_request(text_batch)
                 self._total_tokens += tokens
-                tokens_per_item = tokens // len(text_batch)
                 
-                for company, embedding in zip(company_batch, embeddings):
+                n_items = len(text_batch)
+                base_tokens = tokens // n_items
+                remainder_tokens = tokens % n_items
+
+                for idx, (company, embedding) in enumerate(zip(company_batch, embeddings)):
+                    item_tokens = base_tokens + (1 if idx < remainder_tokens else 0)
                     results.append(CompanyEmbedding(
                         company_id=company.company_id,
                         company_name=company.company_name,
                         embedding=embedding,
-                        token_count=tokens_per_item,
+                        token_count=item_tokens,
                     ))
                     
             except Exception as e:
