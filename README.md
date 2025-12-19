@@ -162,7 +162,7 @@ python run_embedding.py data/aihirebox_company_list.csv --dimensions 2048
 python run_embedding.py data/aihirebox_company_list.csv --company-ids cid_0 cid_1
 
 # 从 JSON 文件读取公司 ID
-python run_embedding.py data/aihirebox_company_list.csv --company-ids-json my_companies.json
+python run_embedding.py data/aihirebox_company_list.csv --company-ids-json data/my_companies.json
 
 # 测试模式（限制数量）
 python run_embedding.py data/aihirebox_company_list.csv --limit 10
