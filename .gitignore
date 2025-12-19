@@ -17,8 +17,9 @@ data/*
 !data/aihirebox_company_list_sample.csv
 !data/aihirebox_company_list_n1_sample.csv
 
-# Output folder - ignore all contents
-output/*
+# Output folders - ignore all directories starting with "output"
+output*/
+
 
 # Test folder - ignore test data contents
 tests/fixtures/*

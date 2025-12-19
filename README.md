@@ -14,6 +14,7 @@ This repository provides a Python-based agentic workflow that turns flexible com
 - API keys for:
   - BoChaAI Web Search (`BOCHAAI_API_KEY`)
   - OpenRouter (primary `OPENROUTER_API_KEY`; optional fallback `OPENROUTER_FALLBACK_API_KEY`)
+  - Jina AI Embeddings (`JINA_API_KEY`) - for company embeddings
 
 Copy `.env.example` to `.env` and fill in your keys:
 
@@ -62,6 +63,7 @@ pip install -r requirements.txt
 
 ```
 openai>=1.30.0
+numpy>=1.24.0
 python-dotenv>=1.0.1
 requests>=2.32.0
 tqdm>=4.66.0
@@ -120,6 +122,129 @@ CSV 输出使用 `|` 作为多选字段分隔符：
 ```csv
 company_id,company_name,industry,business_model,target_market,company_stage,tech_focus,team_background,confidence_score,reasoning
 cid_0,Apex Context,ai_llm|content_media,b2c|saas,global,early,llm_foundation|aigc,bigtech_alumni|top_university,0.90,该公司专注于...
+```
+
+---
+
+## Company Embedding (`company_embedding.py`)
+
+将公司信息（名称、地点、介绍）转化为向量表示，用于语义检索和相似度计算。使用 Jina Embeddings v4 多语言模型。
+
+### Jina Embeddings v4 Features
+
+- **多语言支持**：原生支持中文、英文等多种语言
+- **多模态**：支持文本和图像输入
+- **任务适配**：使用 LoRA 适配器针对不同任务优化（retrieval, text-matching, classification）
+- **灵活维度**：支持 128-2048 维向量
+
+### Configuration
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `model` | `jina-embeddings-v4` | 模型名称 |
+| `dimensions` | `1024` | 向量维度（128/256/512/1024/2048）|
+| `task` | `retrieval.passage` | 任务类型（用于 LoRA 适配器选择）|
+| `batch_size` | `32` | 每批处理数量 |
+
+### Basic Usage
+
+```bash
+# 处理所有公司
+python run_embedding.py data/aihirebox_company_list.csv
+
+# 指定输出目录
+python run_embedding.py data/aihirebox_company_list.csv --output-dir ./output_embeddings
+
+# 自定义维度（更大 = 更精确，更小 = 更快）
+python run_embedding.py data/aihirebox_company_list.csv --dimensions 2048
+
+# 处理特定公司
+python run_embedding.py data/aihirebox_company_list.csv --company-ids cid_0 cid_1
+
+# 从 JSON 文件读取公司 ID
+python run_embedding.py data/aihirebox_company_list.csv --company-ids-json data/my_companies.json
+
+# 测试模式（限制数量）
+python run_embedding.py data/aihirebox_company_list.csv --limit 10
+
+# 静默模式（生产用）
+python run_embedding.py data/aihirebox_company_list.csv --quiet
+
+# 断点续传
+python run_embedding.py data/aihirebox_company_list.csv --output-dir ./embeddings --resume
+```
+
+### Output Format
+
+输出保存到 `output/company_embeddings_<timestamp>/` 目录：
+
+```
+output/company_embeddings_20251219_120000/
+├── company_embeddings.csv       # 带向量的 CSV（embedding 以 JSON 字符串存储）
+├── company_embeddings.json      # JSON 格式完整数据
+├── company_embeddings.npy       # NumPy 数组格式（便于计算）
+├── company_embeddings.mapping.json  # company_id 到数组索引的映射
+└── run_metadata.json            # 运行元数据
+```
+
+### Python API
+
+```python
+from company_embedding import CompanyEmbedder, load_companies_from_csv
+
+# 初始化
+embedder = CompanyEmbedder(
+    api_key="your_jina_api_key",
+    dimensions=1024,
+    task="retrieval.passage",
+)
+
+# 加载公司数据
+companies = load_companies_from_csv("data/aihirebox_company_list.csv")
+
+# 生成 embedding
+results = embedder.embed_companies(companies, show_progress=True)
+
+# 使用向量
+for result in results:
+    print(f"{result.company_id}: {len(result.embedding)} dims")
+```
+
+### Loading Embeddings for Computation
+
+```python
+import numpy as np
+from company_embedding import load_embeddings_npy
+
+# 加载向量和映射
+embeddings, mapping = load_embeddings_npy("output_embeddings/company_embeddings.npy")
+
+# 计算相似度
+from numpy.linalg import norm
+
+def cosine_similarity(a, b):
+    return np.dot(a, b) / (norm(a) * norm(b))
+
+# 获取特定公司的向量
+idx = mapping["cid_0"]
+vector = embeddings[idx]
+
+# 找最相似的公司
+similarities = [cosine_similarity(vector, embeddings[i]) for i in range(len(embeddings))]
+```
+
+### Cost Estimation
+
+- 132 家公司 × ~300 tokens/公司 ≈ 40,000 tokens
+- Jina 免费额度：1M tokens/月
+- 预估成本：几乎免费（在免费额度内）
+
+### Environment Variables
+
+在 `.env` 文件中配置：
+
+```bash
+JINA_API_KEY=your_jina_api_key_here
 ```
 
 ---
@@ -308,7 +433,9 @@ Download and save it as `data/aihirebox_company_list.csv`.
 ```
 aihirebox-company-recsys/
 ├── company_tagging.py              # 核心标签提取模块（含 CompanyTagger 类）
+├── company_embedding.py            # 核心向量嵌入模块（含 CompanyEmbedder 类）
 ├── run_tagging.py                  # 生产用标签提取脚本（支持 web search）
+├── run_embedding.py                # 生产用向量嵌入脚本（使用 Jina v4）
 ├── workflow.py                     # 文章生成工作流
 ├── data/                           # 数据文件
 │   ├── aihirebox_company_list.csv      # 完整公司列表 (132家)
@@ -326,7 +453,8 @@ aihirebox-company-recsys/
 ├── output/                         # 输出目录
 │   ├── model_comparison_*/             # 模型对比结果
 │   ├── websearch_test_*/               # Web search 测试结果
-│   └── company_tags_*/                # run_tagging.py / company_tagging.py 输出
+│   ├── company_tags_*/                 # run_tagging.py 输出
+│   └── company_embeddings_*/           # run_embedding.py 输出
 ├── .env.example                    # 环境变量示例
 ├── .gitignore
 ├── requirements.txt
@@ -340,10 +468,13 @@ aihirebox-company-recsys/
 1. **默认模型**：`openai/gpt-4o-mini:online` - 启用 web search 以提升 team_background 准确率
 2. **Team Background 问题**：基础模型对团队背景的识别率较低，使用 Web Search 可提升 20-30%
 3. **成本权衡**：Web Search 提升准确率但增加成本和延迟，建议仅在需要高准确率时使用
+4. **向量嵌入**：使用 Jina Embeddings v4 对 company_name、location、company_details 进行语义编码，支持后续的相似度检索
 
 ## Notes
 
 - `company_tagging.py` 提供核心 `CompanyTagger` 类和工具函数
-- `run_tagging.py` 是生产用的 CLI 脚本，默认启用 web search
+- `company_embedding.py` 提供核心 `CompanyEmbedder` 类，用于生成向量嵌入
+- `run_tagging.py` 是生产用的标签提取脚本，默认启用 web search
+- `run_embedding.py` 是生产用的向量嵌入脚本，使用 Jina Embeddings v4
 - 多选字段使用 `|` 分隔，便于 pandas 解析
 - 网络调用需要有效的 API key 和网络连接
