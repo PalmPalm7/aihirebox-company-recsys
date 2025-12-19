@@ -292,6 +292,12 @@ def main() -> int:
     if not args.no_checkpoint:
         checkpoint_path = args.output_dir / ".checkpoint.json"
         if not args.resume and checkpoint_path.exists():
+            if not args.quiet:
+                print(
+                    f"Warning: Existing checkpoint found at {checkpoint_path} and it will be deleted. "
+                    "Use --resume to continue from it.",
+                    file=sys.stderr,
+                )
             checkpoint_path.unlink()  # Remove old checkpoint if not resuming
     
     # Initialize embedder
