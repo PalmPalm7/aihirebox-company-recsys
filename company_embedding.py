@@ -67,7 +67,7 @@ class CompanyEmbedder:
     
     Features:
     - Batch processing with configurable batch size
-    - Automatic retry with exponential backoff
+    - Automatic retry with backoff
     - Progress tracking with tqdm
     - Checkpoint support for resumable processing
     
