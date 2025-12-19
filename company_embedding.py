@@ -284,11 +284,13 @@ class CompanyEmbedder:
         
         iterator = batches
         if show_progress:
+            processed_batches = len(results) // self.batch_size if results else 0
+            total_batches = processed_batches + len(batches)
             iterator = tqdm(
                 batches, 
                 desc=f"Embedding ({self.model})",
-                initial=len(results),
-                total=len(batches) + (len(results) // self.batch_size if results else 0),
+                initial=processed_batches,
+                total=total_batches,
             )
         
         for company_batch, text_batch in iterator:
