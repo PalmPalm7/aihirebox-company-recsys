@@ -11,6 +11,7 @@ Jina Embeddings v4 Features:
 """
 
 import json
+import logging
 import os
 import time
 from dataclasses import dataclass, field, asdict
@@ -210,7 +211,6 @@ class CompanyEmbedder:
                     
             except Exception as e:
                 # On batch failure, add empty results with error
-                import logging
                 logging.warning(f"Batch embedding failed: {str(e)}")
                 for _ in batch:
                     results.append(([], 0))
