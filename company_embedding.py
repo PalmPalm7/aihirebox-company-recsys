@@ -151,7 +151,7 @@ class CompanyEmbedder:
             
         except requests.exceptions.RequestException as e:
             if retries > 0:
-                delay = RETRY_DELAY * (MAX_RETRIES - retries + 1)
+                delay = RETRY_DELAY * (2 ** (MAX_RETRIES - retries))
                 time.sleep(delay)
                 return self._make_request(texts, retries - 1)
             raise Exception(f"API request failed after {MAX_RETRIES} retries: {str(e)}")
