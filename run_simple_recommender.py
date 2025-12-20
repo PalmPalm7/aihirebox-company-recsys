@@ -36,7 +36,6 @@ from simple_recommender import (
     RecallResult,
     RECALL_RULES,
     load_data_for_recommender,
-    recall_result_to_dict,
     save_recall_results,
     print_recall_result,
 )

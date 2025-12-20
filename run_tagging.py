@@ -32,7 +32,7 @@ import sys
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Set
+from typing import List, Set, Tuple
 
 from company_tagging import (
     CompanyTagger,
@@ -64,7 +64,7 @@ AVAILABLE_MODELS = [
 ]
 
 
-def load_existing_tags(tags_dir: Path) -> tuple[List[CompanyTags], Set[str]]:
+def load_existing_tags(tags_dir: Path) -> Tuple[List[CompanyTags], Set[str]]:
     """Load existing tags from a directory.
     
     Returns:

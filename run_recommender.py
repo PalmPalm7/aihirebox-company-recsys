@@ -40,7 +40,6 @@ from company_recommender import (
     load_company_profiles,
     load_embeddings,
     print_recommendations,
-    recommendations_to_dict,
     save_recommendations_json,
 )
 

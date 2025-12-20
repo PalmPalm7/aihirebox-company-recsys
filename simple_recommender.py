@@ -16,9 +16,10 @@ Simple Recall Recommender - 基于规则的粗排模块
 """
 
 import json
-from dataclasses import dataclass, field, asdict
+import logging
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Set, Tuple
 
 import numpy as np
 
@@ -31,8 +32,6 @@ from company_embedding import (
 from company_recommender import (
     CompanyProfile, 
     load_company_profiles,
-    HEAD_COMPANY_STAGES,
-    DIMENSION_LABELS,
     CompanyStageHeadSuppression,
 )
 
@@ -238,8 +237,21 @@ class SimpleRecallRecommender:
         """获取公司在指定维度的 tags"""
         tags = getattr(profile, dimension, [])
         if isinstance(tags, str):
-            return {tags} if tags and tags != "unknown" else set()
-        return set(t for t in tags if t and t not in {"unknown", "other", "not_tech_focused"})
+            filtered = {tags} if tags and tags != "unknown" else set()
+            if not filtered and tags:
+                logging.warning(
+                    f"All tags filtered out for company {profile.company_id} in dimension '{dimension}': "
+                    f"original tag was '{tags}'"
+                )
+            return filtered
+        
+        filtered = set(t for t in tags if t and t not in {"unknown", "other", "not_tech_focused"})
+        if not filtered and tags:
+            logging.warning(
+                f"All tags filtered out for company {profile.company_id} in dimension '{dimension}': "
+                f"original tags were {tags}"
+            )
+        return filtered
     
     def _match_rule(self, query: CompanyProfile, rule: Dict) -> Set[str]:
         """匹配规则，返回候选公司ID集合

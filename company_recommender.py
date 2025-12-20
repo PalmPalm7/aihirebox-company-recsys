@@ -13,9 +13,8 @@ Design Philosophy:
 """
 
 import json
-import math
 from collections import defaultdict
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
@@ -227,7 +226,10 @@ class IDFHeadSuppression(HeadSuppressionStrategy):
             len(company.tech_focus) +
             len(company.team_background)
         )
-        # Companies with more tags are more "generic" - penalize slightly
+        # NOTE: This assumes companies with more tags are more "generic" or "common".
+        # However, this may penalize companies that simply have more complete data.
+        # The assumption can be validated with the analyze_head_suppression.py script,
+        # and this component can be disabled via CompositeHeadSuppression weighting if problematic.
         max_tags = global_stats.get("max_tags_per_company", 20)
         normalized = min(tag_count / max_tags, 1.0)
         return normalized * self.max_penalty

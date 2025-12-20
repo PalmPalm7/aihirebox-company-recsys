@@ -10,19 +10,51 @@
 4. 什么样的公司标签最多？
 """
 
+import argparse
 import pandas as pd
 import matplotlib
 matplotlib.use('Agg')  # 非交互式后端
 import matplotlib.pyplot as plt
 import numpy as np
 from collections import Counter
+from pathlib import Path
 
 # 设置中文字体支持
 plt.rcParams['font.sans-serif'] = ['Arial Unicode MS', 'SimHei', 'DejaVu Sans']
 plt.rcParams['axes.unicode_minus'] = False
 
+
+def _parse_args() -> argparse.Namespace:
+    """
+    解析命令行参数。
+
+    --company-tags-path: company_tags.csv 的路径，默认使用项目相对路径：
+        <repo_root>/output_production/company_tagging/company_tags.csv
+    --output-path: 输出图表的路径，默认使用项目相对路径：
+        <repo_root>/output_production/head_suppression_analysis.png
+    """
+    default_tags_path = Path(__file__).resolve().parents[1] / 'output_production' / 'company_tagging' / 'company_tags.csv'
+    default_output_path = Path(__file__).resolve().parents[1] / 'output_production' / 'head_suppression_analysis.png'
+    parser = argparse.ArgumentParser(description="头部公司抑制策略分析")
+    parser.add_argument(
+        "--company-tags-path",
+        type=str,
+        default=str(default_tags_path),
+        help=f"company_tags.csv 路径，默认: {default_tags_path}",
+    )
+    parser.add_argument(
+        "--output-path",
+        type=str,
+        default=str(default_output_path),
+        help=f"输出图表路径，默认: {default_output_path}",
+    )
+    return parser.parse_args()
+
+
+args = _parse_args()
+
 # 读取数据
-df = pd.read_csv('/Users/anxie/Documents/aihirebox/aihirebox-company-recsys/output_production/company_tags.csv')
+df = pd.read_csv(args.company_tags_path)
 df = df.dropna(subset=['company_id'])
 
 print("=" * 70)
@@ -273,7 +305,7 @@ for bar, mean in zip(bars, dim_means):
     ax6.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.1, f'{mean:.1f}', ha='center', fontsize=10)
 
 plt.tight_layout()
-plt.savefig('/Users/anxie/Documents/aihirebox/aihirebox-company-recsys/output_production/head_suppression_analysis.png', dpi=150, bbox_inches='tight')
+plt.savefig(args.output_path, dpi=150, bbox_inches='tight')
 plt.close()  # 不显示，直接关闭
 
 # ============================================================================

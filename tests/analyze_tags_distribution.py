@@ -4,16 +4,48 @@
 分析 company_tags.csv 中各标签的分布情况
 """
 
+import argparse
 import pandas as pd
 import matplotlib.pyplot as plt
 from collections import Counter
+from pathlib import Path
 
 # 设置中文字体支持
 plt.rcParams['font.sans-serif'] = ['Arial Unicode MS', 'SimHei', 'DejaVu Sans']
 plt.rcParams['axes.unicode_minus'] = False
 
+
+def _parse_args() -> argparse.Namespace:
+    """
+    解析命令行参数。
+
+    --company-tags-path: company_tags.csv 的路径，默认使用项目相对路径：
+        <repo_root>/output_production/company_tagging/company_tags.csv
+    --output-path: 输出图表的路径，默认使用项目相对路径：
+        <repo_root>/output_production/tags_distribution.png
+    """
+    default_tags_path = Path(__file__).resolve().parents[1] / 'output_production' / 'company_tagging' / 'company_tags.csv'
+    default_output_path = Path(__file__).resolve().parents[1] / 'output_production' / 'tags_distribution.png'
+    parser = argparse.ArgumentParser(description="公司标签分布分析")
+    parser.add_argument(
+        "--company-tags-path",
+        type=str,
+        default=str(default_tags_path),
+        help=f"company_tags.csv 路径，默认: {default_tags_path}",
+    )
+    parser.add_argument(
+        "--output-path",
+        type=str,
+        default=str(default_output_path),
+        help=f"输出图表路径，默认: {default_output_path}",
+    )
+    return parser.parse_args()
+
+
+args = _parse_args()
+
 # 读取数据
-df = pd.read_csv('/Users/anxie/Documents/aihirebox/aihirebox-company-recsys/output_production/company_tags.csv')
+df = pd.read_csv(args.company_tags_path)
 
 # 过滤掉空行
 df = df.dropna(subset=['company_id'])
@@ -114,10 +146,10 @@ ax6.axvline(confidence_scores.median(), color='blue', linestyle='--', label=f'Me
 ax6.legend()
 
 plt.tight_layout()
-plt.savefig('/Users/anxie/Documents/aihirebox/aihirebox-company-recsys/output_production/tags_distribution.png', dpi=150, bbox_inches='tight')
+plt.savefig(args.output_path, dpi=150, bbox_inches='tight')
 plt.show()
 
-print("\n图表已保存到: tags_distribution.png")
+print(f"\n图表已保存到: {args.output_path}")
 
 # 打印一些统计摘要
 print("\n" + "="*50)

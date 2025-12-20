@@ -40,7 +40,6 @@ import numpy as np
 from company_embedding import (
     CompanyEmbedder,
     CompanyEmbedding,
-    CompanyRecord,
     DEFAULT_DIMENSIONS,
     DEFAULT_MODEL,
     DEFAULT_TASK,
