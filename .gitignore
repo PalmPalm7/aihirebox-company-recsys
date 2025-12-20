@@ -1,25 +1,42 @@
 # Python
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
 
 # Virtual environments
 .venv/
 venv/
+env/
 
 # Environment variables
 .env
+.env.local
 
 # macOS
 .DS_Store
+
+# Jupyter Notebooks
+.ipynb_checkpoints/
+*.ipynb_checkpoints/
 
 # Data folder - ignore all except sample files
 data/*
 !data/aihirebox_company_list_sample.csv
 !data/aihirebox_company_list_n1_sample.csv
 
-# Output folders - ignore all directories starting with "output"
-output*/
+# Output folders - ignore all output directories
+output/
+output_production/
+outputs/
 
-
-# Test folder - ignore test data contents
+# Test folder - ignore test outputs and fixtures
 tests/fixtures/*
+tests/*.png
+tests/__pycache__/
+
+# IDE
+.idea/
+.vscode/
+.cursor/
+*.code-workspace
