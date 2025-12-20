@@ -4,7 +4,7 @@ Production Company Tagging Script with Web Search Support.
 
 This script processes company data from a CSV file and extracts structured tags
 using LLM models. Supports web search enhancement via OpenRouter's :online suffix
-for better team_background accuracy.
+for better team_background accuracy. Also supports incremental updates via --merge.
 
 Usage:
     # Basic usage with default model (openai/gpt-4o-mini:online)
@@ -12,6 +12,12 @@ Usage:
 
     # Use baseline model without web search
     python run_tagging.py data/aihirebox_company_list_sample.csv --model openai/gpt-4o-mini
+
+    # Incremental mode - merge new tags with existing ones
+    python run_tagging.py data/aihirebox_company_list.csv --merge output_production/
+
+    # Process specific companies and merge with existing
+    python run_tagging.py data/aihirebox_company_list.csv --company-ids cid_new_1 cid_new_2 --merge output_production/
 
     # Limit companies for testing
     python run_tagging.py data/aihirebox_company_list_sample.csv --limit 5
@@ -26,7 +32,7 @@ import sys
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, List, Optional, Set
 
 from company_tagging import (
     CompanyTagger,
@@ -56,6 +62,58 @@ AVAILABLE_MODELS = [
     "google/gemini-2.5-flash",
     "google/gemini-2.5-flash:online",
 ]
+
+
+def load_existing_tags(tags_dir: Path) -> tuple[List[CompanyTags], Set[str]]:
+    """Load existing tags from a directory.
+    
+    Returns:
+        Tuple of (list of CompanyTags, set of company_ids)
+    """
+    json_path = tags_dir / "company_tags.json"
+    
+    if not json_path.exists():
+        raise FileNotFoundError(f"Tags not found: {json_path}")
+    
+    with open(json_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    
+    existing_tags = []
+    existing_ids = set()
+    
+    for item in data:
+        tags = CompanyTags(
+            company_id=item["company_id"],
+            company_name=item["company_name"],
+            industry=item.get("industry", []),
+            business_model=item.get("business_model", []),
+            target_market=item.get("target_market", []),
+            company_stage=item.get("company_stage", "unknown"),
+            tech_focus=item.get("tech_focus", []),
+            team_background=item.get("team_background", []),
+            confidence_score=item.get("confidence_score", 0.0),
+            raw_reasoning=item.get("raw_reasoning", item.get("reasoning", "")),
+        )
+        existing_tags.append(tags)
+        existing_ids.add(item["company_id"])
+    
+    return existing_tags, existing_ids
+
+
+def merge_tags(
+    existing_tags: List[CompanyTags],
+    new_tags: List[CompanyTags],
+) -> List[CompanyTags]:
+    """Merge new tags with existing ones.
+    
+    New results take precedence over existing ones with the same company_id.
+    """
+    merged = {t.company_id: t for t in existing_tags}
+    
+    for t in new_tags:
+        merged[t.company_id] = t
+    
+    return list(merged.values())
 
 
 def save_run_metadata(
@@ -175,6 +233,12 @@ Note: Models with ':online' suffix enable real-time web search for better team_b
         action="store_true",
         help="Disable reasoning output to reduce token cost",
     )
+    parser.add_argument(
+        "--merge",
+        type=Path,
+        metavar="EXISTING_DIR",
+        help="Merge with existing tags from specified directory (incremental mode)",
+    )
     return parser.parse_args()
 
 
@@ -227,10 +291,44 @@ def main() -> None:
         print("No companies to process!")
         sys.exit(1)
     
+    # Handle merge mode - load existing tags
+    existing_tags = []
+    existing_ids: Set[str] = set()
+    
+    if args.merge:
+        if not args.merge.exists():
+            print(f"Error: Merge directory not found: {args.merge}")
+            sys.exit(1)
+        
+        try:
+            existing_tags, existing_ids = load_existing_tags(args.merge)
+            if not args.quiet:
+                print(f"Loaded {len(existing_ids)} existing tags from {args.merge}")
+        except Exception as e:
+            print(f"Error loading existing tags: {e}")
+            sys.exit(1)
+        
+        # Filter out companies that already have tags (unless specifically requested via --company-ids)
+        if not company_ids_to_filter:
+            original_count = len(companies)
+            companies = [c for c in companies if c.company_id not in existing_ids]
+            skipped = original_count - len(companies)
+            if not args.quiet and skipped > 0:
+                print(f"Skipping {skipped} companies with existing tags")
+        
+        if not companies:
+            if not args.quiet:
+                print("All companies already have tags. Nothing to do.")
+            sys.exit(0)
+    
     # Setup output directory
     if args.output_dir is None:
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        args.output_dir = Path("output") / f"company_tags_{timestamp}"
+        if args.merge:
+            # Default to same directory when merging
+            args.output_dir = args.merge
+        else:
+            # Default to output_production/company_tagging for unified structure
+            args.output_dir = Path("output_production/company_tagging")
     
     args.output_dir.mkdir(parents=True, exist_ok=True)
     
@@ -252,12 +350,20 @@ def main() -> None:
     
     # Process companies
     start_time = time.time()
-    results = tagger.tag_companies(
+    new_results = tagger.tag_companies(
         companies, 
         show_progress=not args.quiet,
         delay_seconds=args.delay,
     )
     duration = time.time() - start_time
+    
+    # Merge with existing results if in merge mode
+    results = new_results
+    if args.merge and existing_tags:
+        results = merge_tags(existing_tags, new_results)
+        if not args.quiet:
+            print(f"Merged {len(new_results)} new tags with {len(existing_tags)} existing")
+            print(f"Total tags: {len(results)}")
     
     # Save results
     if args.output_format in ("csv", "both"):
@@ -283,14 +389,16 @@ def main() -> None:
     
     # Print summary
     if not args.quiet:
-        print_summary(results)
+        # Show summary of newly processed companies
+        print_summary(new_results)
         
-        # Team background specific metrics
-        team_metrics = calculate_team_metrics(results)
-        print("\n--- Team Background Analysis ---")
+        # Team background specific metrics for new results
+        team_metrics = calculate_team_metrics(new_results)
+        print("\n--- Team Background Analysis (New) ---")
         print(f"Coverage: {team_metrics['coverage_rate']*100:.1f}% ({team_metrics['known_team_background']}/{team_metrics['total_companies']})")
         print(f"Distribution: {team_metrics['tag_distribution']}")
-        print(f"\nDuration: {duration:.1f}s ({duration/len(results):.1f}s per company)")
+        if new_results:
+            print(f"\nDuration: {duration:.1f}s ({duration/len(new_results):.1f}s per company)")
         
         print(f"\n✅ Tagging complete! Results saved to: {args.output_dir}")
 

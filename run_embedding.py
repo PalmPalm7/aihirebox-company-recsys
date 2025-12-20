@@ -3,20 +3,23 @@
 Production Embedding Script - Generate company embeddings using Jina Embeddings v4.
 
 This script provides a CLI interface for generating embeddings for company details,
-with support for batch processing, checkpointing, and multiple output formats.
+with support for batch processing, checkpointing, incremental updates, and multiple output formats.
 
 Usage:
-    # Basic usage
+    # Basic usage (full run)
     python run_embedding.py data/aihirebox_company_list.csv
 
     # Specify output directory
     python run_embedding.py data/aihirebox_company_list.csv --output-dir ./output_embeddings
 
+    # Incremental mode - merge new embeddings with existing ones
+    python run_embedding.py data/aihirebox_company_list.csv --merge output/company_embeddings_full
+
+    # Process specific companies and merge with existing
+    python run_embedding.py data/aihirebox_company_list.csv --company-ids cid_new_1 cid_new_2 --merge output/company_embeddings_full
+
     # Custom dimensions (128, 256, 512, 1024, 2048)
     python run_embedding.py data/aihirebox_company_list.csv --dimensions 2048
-
-    # Process specific companies
-    python run_embedding.py data/aihirebox_company_list.csv --company-ids cid_0 cid_1
 
     # Production mode (quiet, minimal output)
     python run_embedding.py data/aihirebox_company_list.csv --quiet
@@ -30,15 +33,19 @@ import json
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import List
+from typing import Dict, List, Tuple
+
+import numpy as np
 
 from company_embedding import (
     CompanyEmbedder,
     CompanyEmbedding,
+    CompanyRecord,
     DEFAULT_DIMENSIONS,
     DEFAULT_MODEL,
     DEFAULT_TASK,
     load_companies_from_csv,
+    load_embeddings_npy,
     load_jina_api_key,
     save_embeddings_csv,
     save_embeddings_json,
@@ -54,23 +61,23 @@ def parse_args() -> argparse.Namespace:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Process all companies in CSV
+  # Process all companies in CSV (full run)
   python run_embedding.py data/aihirebox_company_list.csv
 
   # Specify output directory
   python run_embedding.py data/aihirebox_company_list.csv --output-dir ./embeddings
+
+  # Incremental mode - add new companies to existing embeddings
+  python run_embedding.py data/aihirebox_company_list.csv --merge output/company_embeddings_full
+
+  # Process specific new companies and merge with existing
+  python run_embedding.py data/aihirebox_company_list.csv --company-ids cid_new_1 cid_new_2 --merge output/company_embeddings_full
 
   # Custom dimensions (smaller = faster, larger = more accurate)
   python run_embedding.py data/aihirebox_company_list.csv --dimensions 2048
 
   # Process specific companies by ID
   python run_embedding.py data/aihirebox_company_list.csv --company-ids cid_0 cid_1 cid_2
-
-  # Process companies from JSON file
-  python run_embedding.py data/aihirebox_company_list.csv --company-ids-json data/my_companies.json
-
-  # Limit number for testing
-  python run_embedding.py data/aihirebox_company_list.csv --limit 10
 
   # Production mode (quiet output)
   python run_embedding.py data/aihirebox_company_list.csv --quiet
@@ -153,6 +160,12 @@ Examples:
         action="store_true",
         help="Disable checkpoint saving",
     )
+    parser.add_argument(
+        "--merge",
+        type=Path,
+        metavar="EXISTING_DIR",
+        help="Merge with existing embeddings from specified directory (incremental mode)",
+    )
     
     return parser.parse_args()
 
@@ -181,6 +194,69 @@ def load_company_ids_from_json(json_path: Path) -> List[str]:
             f"Invalid JSON format in '{json_path}'. Expected list or dict with 'company_ids' key, "
             f"but got {actual_type}.{extra_info}"
         )
+
+
+def load_existing_embeddings(embeddings_dir: Path) -> Tuple[np.ndarray, Dict[str, int], List[CompanyEmbedding]]:
+    """Load existing embeddings from a directory.
+    
+    Returns:
+        Tuple of (numpy array, mapping dict, list of CompanyEmbedding objects)
+    """
+    npy_path = embeddings_dir / "company_embeddings.npy"
+    json_path = embeddings_dir / "company_embeddings.json"
+    
+    if not npy_path.exists():
+        raise FileNotFoundError(f"Embeddings not found: {npy_path}")
+    
+    # Load numpy array and mapping
+    embeddings, mapping = load_embeddings_npy(npy_path)
+    
+    # Load full CompanyEmbedding objects from JSON if available
+    existing_results = []
+    if json_path.exists():
+        with open(json_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        for item in data:
+            existing_results.append(CompanyEmbedding(
+                company_id=item["company_id"],
+                company_name=item["company_name"],
+                embedding=item.get("embedding"),
+                token_count=item.get("token_count", 0),
+                error=item.get("error"),
+            ))
+    else:
+        # If no JSON, create minimal CompanyEmbedding objects from mapping
+        # (we won't have company_name or token_count)
+        for company_id, idx in mapping.items():
+            existing_results.append(CompanyEmbedding(
+                company_id=company_id,
+                company_name="",
+                embedding=embeddings[idx].tolist(),
+                token_count=0,
+                error=None,
+            ))
+    
+    return embeddings, mapping, existing_results
+
+
+def merge_embeddings(
+    existing_results: List[CompanyEmbedding],
+    new_results: List[CompanyEmbedding],
+    existing_mapping: Dict[str, int],
+) -> List[CompanyEmbedding]:
+    """Merge new embeddings with existing ones.
+    
+    New results take precedence over existing ones with the same company_id.
+    """
+    # Create dict of existing results by company_id
+    merged = {r.company_id: r for r in existing_results}
+    
+    # Add/update with new results
+    for r in new_results:
+        merged[r.company_id] = r
+    
+    # Return as list, maintaining a consistent order
+    return list(merged.values())
 
 
 def save_run_metadata(
@@ -280,10 +356,44 @@ def main() -> int:
         print("No companies to process!")
         return 0
     
+    # Handle merge mode - load existing embeddings
+    existing_results = []
+    existing_mapping = {}
+    
+    if args.merge:
+        if not args.merge.exists():
+            print(f"Error: Merge directory not found: {args.merge}", file=sys.stderr)
+            return 1
+        
+        try:
+            _, existing_mapping, existing_results = load_existing_embeddings(args.merge)
+            if not args.quiet:
+                print(f"Loaded {len(existing_mapping)} existing embeddings from {args.merge}")
+        except Exception as e:
+            print(f"Error loading existing embeddings: {e}", file=sys.stderr)
+            return 1
+        
+        # Filter out companies that already have embeddings (unless specifically requested via --company-ids)
+        if not company_ids_to_filter:
+            original_count = len(companies)
+            companies = [c for c in companies if c.company_id not in existing_mapping]
+            skipped = original_count - len(companies)
+            if not args.quiet and skipped > 0:
+                print(f"Skipping {skipped} companies with existing embeddings")
+        
+        if not companies:
+            if not args.quiet:
+                print("All companies already have embeddings. Nothing to do.")
+            return 0
+    
     # Set up output directory
     if args.output_dir is None:
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        args.output_dir = Path("output") / f"company_embeddings_{timestamp}"
+        if args.merge:
+            # Default to same directory when merging
+            args.output_dir = args.merge
+        else:
+            # Default to output_production/company_embedding for unified structure
+            args.output_dir = Path("output_production/company_embedding")
     
     args.output_dir.mkdir(parents=True, exist_ok=True)
     
@@ -335,6 +445,14 @@ def main() -> int:
     if checkpoint_path and checkpoint_path.exists():
         checkpoint_path.unlink()
     
+    # Merge with existing results if in merge mode
+    new_results = results
+    if args.merge and existing_results:
+        results = merge_embeddings(existing_results, new_results, existing_mapping)
+        if not args.quiet:
+            print(f"Merged {len(new_results)} new embeddings with {len(existing_results)} existing")
+            print(f"Total embeddings: {len(results)}")
+    
     # Save results
     if args.output_format in ("csv", "all"):
         csv_path = args.output_dir / "company_embeddings.csv"
@@ -362,10 +480,12 @@ def main() -> int:
     
     # Print summary
     if not args.quiet:
-        print_embedding_summary(results)
+        # Show summary of newly processed companies
+        print_embedding_summary(new_results)
         duration = (end_time - start_time).total_seconds()
         print(f"\nTotal time: {duration:.1f}s")
-        print(f"Average: {duration / len(results):.2f}s per company")
+        if new_results:
+            print(f"Average: {duration / len(new_results):.2f}s per company")
     
     return 0
 
