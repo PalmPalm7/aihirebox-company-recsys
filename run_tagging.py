@@ -57,8 +57,8 @@ AVAILABLE_MODELS = [
     "openai/gpt-oss-120b:online",
     "openai/gpt-5-mini",
     "openai/gpt-5-mini:online",
-    "openai/gpt-5-mini",
-    "openai/gpt-5-mini:online",
+    "openai/gpt-4o-mini",
+    "openai/gpt-4o-mini:online",
     "google/gemini-2.5-flash",
     "google/gemini-2.5-flash:online",
 ]
