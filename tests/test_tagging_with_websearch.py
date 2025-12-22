@@ -5,7 +5,7 @@ Uses the :online suffix to enable real-time web search via OpenRouter.
 See: https://openrouter.ai/docs/guides/features/plugins/web-search
 
 Models tested:
-- openai/gpt-4o-mini:online
+- openai/gpt-5-mini:online
 - google/gemini-2.5-flash:online
 """
 
@@ -35,10 +35,10 @@ from company_tagging import (
 # Models to test - with :online suffix for web search
 MODELS_TO_TEST = [
     # With web search enabled
-    ("openai/gpt-4o-mini:online", "gpt4o-mini-online"),
+    ("openai/gpt-5-mini:online", "gpt4o-mini-online"),
     ("google/gemini-2.5-flash:online", "gemini-flash-online"),
     # Without web search (baseline)
-    ("openai/gpt-4o-mini", "gpt4o-mini-baseline"),
+    ("openai/gpt-5-mini", "gpt4o-mini-baseline"),
     ("google/gemini-2.5-flash", "gemini-flash-baseline"),
 ]
 

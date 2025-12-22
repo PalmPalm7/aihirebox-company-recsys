@@ -157,7 +157,7 @@ class AgenticWorkflow:
     def _call_llm(self, messages: List[Dict[str, str]]) -> str:
         try:
             response = self.openrouter_client.chat.completions.create(
-                model="gpt-4o-mini",
+                model="gpt-5-mini",
                 messages=messages,
             )
             return response.choices[0].message.content or ""
@@ -166,7 +166,7 @@ class AgenticWorkflow:
                 raise
             backup_client = OpenAI(api_key=self.fallback_openrouter_api_key, base_url=self.openrouter_base_url)
             response = backup_client.chat.completions.create(
-                model="gpt-4o-mini",
+                model="gpt-5-mini",
                 messages=messages,
             )
             return response.choices[0].message.content or ""

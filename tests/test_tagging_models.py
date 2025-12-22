@@ -2,7 +2,7 @@
 Test script for comparing different LLM models on company tagging.
 
 Tests the company_tagging.py script with multiple models:
-- openai/gpt-4o-mini
+- openai/gpt-5-mini
 - deepseek/deepseek-chat  
 - google/gemini-2.5-flash
 
@@ -35,7 +35,7 @@ from company_tagging import (
 
 # Models to test (OpenRouter model IDs)
 MODELS_TO_TEST = [
-    "openai/gpt-4o-mini",
+    "openai/gpt-5-mini",
     "deepseek/deepseek-chat",  # DeepSeek V3
     "google/gemini-2.5-flash",
 ]
