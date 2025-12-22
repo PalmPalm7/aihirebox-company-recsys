@@ -25,7 +25,7 @@ RECOMMENDER_OUTPUT="${OUTPUT_BASE}/recommender"
 SIMPLE_RECALL_OUTPUT="${OUTPUT_BASE}/simple_recall"
 
 # Model for tagging (with web search for better team_background)
-TAGGING_MODEL="openai/gpt-4o-mini:online"
+TAGGING_MODEL="openai/gpt-5-mini:online"
 
 # ============================================================================
 # Pre-checks

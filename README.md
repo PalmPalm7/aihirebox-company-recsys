@@ -2,17 +2,16 @@
 
 该项目构造AI职小盒旗下智能体公司咨询推荐模块，部分代码和文档由Claude Code/Codex等copilot agent修正、生成。
 
-This repository provides a Python-based agentic workflow that turns flexible company/job inputs into XiaoHongShu-style articles recommending similar companies and roles. It stitches together:
+This repository provides a Python-based agentic workflow for company recommendation and article generation:
 
-1. Feature Engineering (Representation Learning with LLM with offline generations).
-2. A BoChaAI web search to gather recent context.
-3. OpenRouter-compatible LLM calls to craft search queries and write the article.
+1. **Feature Engineering** - LLM-based company tagging and Jina Embeddings for semantic representation
+2. **Recommendation Engine** - Multi-dimensional company recommendation with head suppression
+3. **Article Generation** - LLM-powered reranking and multi-style article writing via OpenRouter
 
 ## Prerequisites
 
 - Python 3.10+
 - API keys for:
-  - BoChaAI Web Search (`BOCHAAI_API_KEY`)
   - OpenRouter (primary `OPENROUTER_API_KEY`; optional fallback `OPENROUTER_FALLBACK_API_KEY`)
   - Jina AI Embeddings (`JINA_API_KEY`) - for company embeddings
 
@@ -78,9 +77,13 @@ output_production/
 ├── recommender/                # 推荐模块
 │   ├── recommendations.json    # 推荐结果
 │   └── run_metadata.json
-└── simple_recall/              # 简化召回模块
-    ├── recall_results.json     # 召回结果
-    └── run_metadata.json
+├── simple_recall/              # 简化召回模块
+│   ├── recall_results.json     # 召回结果
+│   └── run_metadata.json
+└── article_generator/          # 文章生成模块
+    ├── web_search_cache/       # Web 搜索缓存
+    ├── rerank_cache/           # LLM 精排缓存
+    └── articles/               # 生成的文章
 ```
 
 **容器化挂载**：只需挂载两个目录：
@@ -156,7 +159,7 @@ python company_tagging.py data/aihirebox_company_list.csv --company-ids cid_0 --
 python company_tagging.py data/aihirebox_company_list.csv --limit 10
 
 # Use web search for better team_background accuracy
-python company_tagging.py data/aihirebox_company_list.csv --model openai/gpt-4o-mini:online
+python company_tagging.py data/aihirebox_company_list.csv --model openai/gpt-5-mini:online
 ```
 
 ### Output Format
@@ -970,21 +973,293 @@ print_recall_result(result)
 
 ---
 
-## Article Generation Workflow (`workflow.py`)
+# LLM 精排与文章生成系统 (`article_generator/`)
 
-生成小红书风格的公司推荐文章。
+基于召回结果生成多风格行业分析文章的三层架构系统。
 
-### How it works
+## 系统架构
 
-1. **Query generation**: LLM 生成搜索查询
-2. **Web search**: BoChaAI 搜索相关信息
-3. **Article drafting**: LLM 生成 ~300 字推荐文章
+```mermaid
+flowchart TB
+    subgraph input [Input]
+        recall[recall_results.json]
+        csv[aihirebox_company_list.csv]
+    end
+    
+    subgraph layer0 [Layer 0: OpenRouter Web Search]
+        openrouter["gpt-5-mini:online + Exa.ai"]
+        note["带 company_details 上下文搜索<br/>自动剔除无关文章<br/>输出长总结作为 RAG 语料"]
+        cache0[web_search_cache/]
+    end
+    
+    subgraph layer1 [Layer 1: GPT-5-mini Reranker]
+        rerank[openai/gpt-5-mini]
+        cache1[rerank_cache/]
+    end
+    
+    subgraph layer2 [Layer 2: Article Writer]
+        writer[google/gemini-3-flash-preview]
+        styles[5 Styles]
+        articles[articles/]
+    end
+    
+    csv --> openrouter
+    openrouter --> note
+    note --> cache0
+    
+    recall --> rerank
+    cache0 --> rerank
+    rerank --> cache1
+    
+    cache0 --> writer
+    cache1 --> writer
+    writer --> styles
+    styles --> articles
+```
 
-### Usage
+## 三层处理流程
+
+| Layer | 模块 | 输入 | 输出 | 模型 |
+|-------|------|------|------|------|
+| **Layer 0** | Web Search | company CSV | 公司研究报告 (800-1500字) | `gpt-5-mini:online` + Exa.ai |
+| **Layer 1** | Reranker | 召回结果 + Web Search 缓存 | 精选 Top 5 公司 + 叙事角度 | `gpt-5-mini` |
+| **Layer 2** | Article Writer | 精排结果 + Web Search 缓存 | 多风格文章 | `gemini-3-flash-preview` |
+
+## Layer 0: Web Search (`run_web_search_cache.py`)
+
+使用 OpenRouter `:online` 后缀启用 Exa.ai 搜索，带 company_details 上下文自动剔除无关文章。
+
+### 工作原理
+
+1. 在 model slug 后添加 `:online`（如 `openai/gpt-5-mini:online`）
+2. OpenRouter 使用 **Exa.ai** 执行搜索并总结结果
+3. 带着 company_details 作为上下文搜索，模型自动剔除不相关文章
+4. 输出 800-1500 字的公司研究报告作为下游 RAG 语料
+
+### 使用方法
 
 ```bash
-python workflow.py "{\"company_id\":\"c123\",\"company_name\":\"AIHireBox\",\"job_id\":\"j001\",\"job_name\":\"Product Manager\",\"job_description\":\"Responsible for AI hiring product roadmap\"}" \
-  --output-dir output
+# 搜索所有公司
+python run_web_search_cache.py \
+    --company-csv data/aihirebox_company_list.csv \
+    --output-dir output_production/article_generator/web_search_cache \
+    --max-results 10 \
+    --skip-existing
+
+# 搜索指定公司
+python run_web_search_cache.py \
+    --company-csv data/aihirebox_company_list.csv \
+    --company-ids cid_100 cid_101 \
+    --output-dir output_production/article_generator/web_search_cache
+    
+# 从 JSON 文件读取公司列表
+python run_web_search_cache.py \
+    --company-csv data/aihirebox_company_list.csv \
+    --company-ids-json data/target_companies.json \
+    --output-dir output_production/article_generator/web_search_cache
+```
+
+### 输出格式
+
+每个公司一个 JSON 文件 (`{company_id}.json`)：
+
+```json
+{
+  "company_id": "cid_100",
+  "company_name": "MiniMax",
+  "query_used": "请搜索并总结关于以下公司的最新信息...",
+  "search_summary": "## 公司概况\nMiniMax是一家专注于通用大模型研发的AI公司...\n\n## 最新动态\n...",
+  "citations": ["https://36kr.com/...", "https://www.thepaper.cn/..."],
+  "is_valid": true,
+  "searched_at": "2024-12-21T10:30:00"
+}
+```
+
+### 定价
+
+- **$4 / 1,000 web searches**
+- 默认每次请求返回 10 条搜索结果
+
+## Layer 1: LLM Reranker (`run_reranker.py`)
+
+使用 GPT-5-mini 从每个规则的 20 个候选中选择 Top 5 最相关的公司。
+
+### 使用方法
+
+```bash
+# 精排所有召回结果
+python run_reranker.py \
+    --recall-results output_production/simple_recall/recall_results.json \
+    --output-dir output_production/article_generator/rerank_cache \
+    --top-k 5 \
+    --skip-existing
+
+# 精排指定公司
+python run_reranker.py \
+    --recall-results output_production/simple_recall/recall_results.json \
+    --company-ids cid_100 cid_101 \
+    --output-dir output_production/article_generator/rerank_cache
+    
+# 使用 web search 缓存增强精排
+python run_reranker.py \
+    --recall-results output_production/simple_recall/recall_results.json \
+    --web-cache-dir output_production/article_generator/web_search_cache \
+    --output-dir output_production/article_generator/rerank_cache
+```
+
+### 输出格式
+
+每个 (query_company, rule) 对一个 JSON 文件 (`{company_id}_{rule_id}.json`)：
+
+```json
+{
+  "query_company_id": "cid_100",
+  "query_company_name": "MiniMax",
+  "rule_id": "R1_industry",
+  "rule_name": "同行业公司",
+  "narrative_angle": "这些都是在大模型应用层创业的团队，各自找到了独特的垂直场景",
+  "selected_companies": [
+    {
+      "company_id": "cid_114",
+      "company_name": "月之暗面",
+      "location": "北京市海淀区...",
+      "company_details": "...",
+      "selection_reason": "核心业务与查询公司高度互补，可形成对比分析"
+    }
+  ],
+  "reranked_at": "2024-12-21T10:35:00"
+}
+```
+
+## Layer 2: Article Writer (`run_article_writer.py`)
+
+使用 Gemini 生成多风格文章。
+
+### 5 种文章风格
+
+| Style | 字数 | Emoji | 特点 |
+|-------|------|-------|------|
+| **36kr** | 800-1200 | ❌ | 专业、数据驱动、行业分析 |
+| **huxiu** | 1000-1500 | ❌ | 犀利、有态度、深度评论 |
+| **xiaohongshu** | 500-800 | ✅ | 轻松、口语化、分点列举 |
+| **linkedin** | 600-1000 | ❌ | 职场视角、强调机会 |
+| **zhihu** | 1000-1500 | ❌ | 知识分享、逻辑清晰 |
+
+风格模板详见 `prompts/article_styles/` 目录。
+
+### 使用方法
+
+```bash
+# 生成所有风格的文章
+python run_article_writer.py \
+    --rerank-dir output_production/article_generator/rerank_cache \
+    --web-cache-dir output_production/article_generator/web_search_cache \
+    --output-dir output_production/article_generator/articles \
+    --styles 36kr huxiu xiaohongshu linkedin zhihu
+
+# 只生成小红书风格
+python run_article_writer.py \
+    --rerank-dir output_production/article_generator/rerank_cache \
+    --output-dir output_production/article_generator/articles \
+    --styles xiaohongshu
+
+# 生成指定公司的文章
+python run_article_writer.py \
+    --rerank-dir output_production/article_generator/rerank_cache \
+    --company-ids cid_100 \
+    --output-dir output_production/article_generator/articles \
+    --styles 36kr xiaohongshu
+```
+
+### 输出格式
+
+每篇文章两个文件：
+- `{company_id}_{rule_id}_{style}.json` - 结构化数据
+- `{company_id}_{rule_id}_{style}.md` - Markdown 格式
+
+```json
+{
+  "query_company_id": "cid_100",
+  "query_company_name": "MiniMax",
+  "rule_id": "R1_industry",
+  "style": "36kr",
+  "title": "大模型赛道的差异化竞争：MiniMax与5家头部AI公司的技术路径对比",
+  "content": "在大模型赛道激战正酣的2024年...",
+  "word_count": 1050,
+  "key_takeaways": [
+    "MiniMax 专注于多模态大模型",
+    "月之暗面 以长上下文技术见长",
+    "..."
+  ],
+  "citations": ["https://36kr.com/..."],
+  "generated_at": "2024-12-21T10:40:00"
+}
+```
+
+## 完整 Pipeline
+
+```bash
+# Step 0: 生成召回结果（如果还没有）
+python run_simple_recommender.py --all \
+    --output-dir output_production/simple_recall
+
+# Step 1: Web Search 缓存（搜索所有公司信息）
+python run_web_search_cache.py \
+    --company-csv data/aihirebox_company_list.csv \
+    --output-dir output_production/article_generator/web_search_cache \
+    --skip-existing
+
+# Step 2: LLM 精排
+python run_reranker.py \
+    --recall-results output_production/simple_recall/recall_results.json \
+    --web-cache-dir output_production/article_generator/web_search_cache \
+    --output-dir output_production/article_generator/rerank_cache \
+    --skip-existing
+
+# Step 3: 生成文章（默认 36kr + xiaohongshu 风格）
+python run_article_writer.py \
+    --rerank-dir output_production/article_generator/rerank_cache \
+    --web-cache-dir output_production/article_generator/web_search_cache \
+    --output-dir output_production/article_generator/articles \
+    --styles 36kr xiaohongshu \
+    --skip-existing
+```
+
+## 成本估算
+
+| 项目 | 数量 | 单价 | 总成本 |
+|------|------|------|--------|
+| Web Search + 总结 | 132 公司 | $4/1000 + ~$0.003/次 | ~$0.93 |
+| Reranker | 132 x 5 rules | ~$0.002/次 | ~$1.32 |
+| Article Writer | 132 x 5 rules x 2 styles | ~$0.005/次 | ~$6.60 |
+| **总计** | | | **~$8.85** |
+
+> 注：使用 2 种风格（36kr + xiaohongshu）的估算
+
+## Python API
+
+```python
+from article_generator import (
+    OpenRouterWebSearcher,
+    LLMReranker,
+    ArticleWriter,
+    ARTICLE_STYLES,
+)
+
+# Layer 0: Web Search
+searcher = OpenRouterWebSearcher()
+web_result = searcher.search_company("cid_100", "MiniMax", "MiniMax是一家...")
+
+# Layer 1: Reranker
+reranker = LLMReranker()
+rerank_result = reranker.rerank(query_company, candidates, "R1_industry", top_k=5)
+
+# Layer 2: Article Writer
+writer = ArticleWriter()
+article = writer.write_article(rerank_result, style_id="36kr", web_search_cache={})
+
+print(f"Title: {article.title}")
+print(f"Content: {article.content[:200]}...")
 ```
 
 ---
@@ -1046,11 +1321,27 @@ aihirebox-company-recsys/
 ├── company_embedding.py            # 核心向量嵌入模块（含 CompanyEmbedder 类）
 ├── company_recommender.py          # 核心推荐引擎（含 CompanyRecommender 类）
 ├── simple_recommender.py           # 简化版召回模块（5规则粗排，用于LLM精排）
-├── run_tagging.py                  # 生产用标签提取脚本（支持 web search）
-├── run_embedding.py                # 生产用向量嵌入脚本（使用 Jina v4）
-├── run_recommender.py              # 生产用推荐脚本（支持头部抑制）
-├── run_simple_recommender.py       # 简化版召回脚本（5规则粗排）
-├── workflow.py                     # 文章生成工作流
+├── run_tagging.py                  # 生产用标签提取脚本
+├── run_embedding.py                # 生产用向量嵌入脚本
+├── run_recommender.py              # 生产用推荐脚本
+├── run_simple_recommender.py       # 简化版召回脚本
+├── run_web_search_cache.py         # Web Search 缓存脚本
+├── run_reranker.py                 # LLM 精排脚本
+├── run_article_writer.py           # 文章生成脚本
+├── article_generator/              # 文章生成模块
+│   ├── __init__.py
+│   ├── models.py                       # 数据模型
+│   ├── web_searcher.py                 # OpenRouter :online Web Search
+│   ├── reranker.py                     # GPT-5-mini 精排器
+│   ├── article_writer.py               # Gemini 文章生成器
+│   └── styles.py                       # 5种文章风格定义
+├── prompts/                        # Prompt 模板
+│   └── article_styles/                 # 风格写作指南
+│       ├── 36kr.md
+│       ├── huxiu.md
+│       ├── xiaohongshu.md
+│       ├── linkedin.md
+│       └── zhihu.md
 ├── data/                           # 数据文件
 │   ├── aihirebox_company_list.csv      # 完整公司列表 (132家)
 │   ├── aihirebox_company_list_sample.csv # 测试样本 (32家)
@@ -1060,21 +1351,18 @@ aihirebox-company-recsys/
 │   ├── test_tagging_models.py          # 模型对比测试
 │   ├── test_tagging_with_websearch.py  # Web search 增强测试
 │   └── fixtures/                       # 测试数据
-│       ├── test_apex_context.json
-│       └── test_timetell.json
 ├── scripts/                        # 辅助脚本
 │   └── merge_comparison.py             # 结果合并工具
 ├── output/                         # 开发/测试输出目录
-│   ├── model_comparison_*/             # 模型对比结果
-│   ├── websearch_test_*/               # Web search 测试结果
-│   ├── company_tags_*/                 # run_tagging.py 测试输出
-│   ├── company_embeddings_*/           # run_embedding.py 测试输出
-│   └── recommendations_*/              # run_recommender.py 测试输出
 ├── output_production/              # 生产数据目录
 │   ├── company_tagging/                # 公司标签
 │   ├── company_embedding/              # 向量嵌入
 │   ├── recommender/                    # 推荐结果
-│   └── simple_recall/                  # 简化召回结果
+│   ├── simple_recall/                  # 简化召回结果
+│   └── article_generator/              # 文章生成
+│       ├── web_search_cache/           # Web 搜索缓存
+│       ├── rerank_cache/               # 精排缓存
+│       └── articles/                   # 生成的文章
 ├── .env.example                    # 环境变量示例
 ├── .gitignore
 ├── requirements.txt
@@ -1085,7 +1373,7 @@ aihirebox-company-recsys/
 
 ## Key Insights
 
-1. **默认模型**：`openai/gpt-4o-mini:online` - 启用 web search 以提升 team_background 准确率
+1. **默认模型**：`openai/gpt-5-mini:online` - 启用 web search 以提升 team_background 准确率
 2. **Team Background 问题**：基础模型对团队背景的识别率较低，使用 Web Search 可提升 20-30%
 3. **成本权衡**：Web Search 提升准确率但增加成本和延迟，建议仅在需要高准确率时使用
 4. **向量嵌入**：使用 Jina Embeddings v4 对 company_name、location、company_details 进行语义编码，支持后续的相似度检索
@@ -1093,6 +1381,7 @@ aihirebox-company-recsys/
 6. **分数阈值**：可设置最低分数阈值过滤低质量推荐，如果一个维度有过多低分候选则跳过该维度
 7. **Embedding 加成**：tag 相似度与 embedding 语义相似度融合（默认 6:4 权重），提升推荐准确性
 8. **简化版召回**：`simple_recommender.py` 提供 5 规则粗排召回，轻量级头部抑制（50%），输出原始数据供 LLM 精排使用
+9. **三层文章生成**：Web Search (RAG) → LLM Reranker (精选 Top 5) → Article Writer (多风格生成)
 
 ## Notes
 
@@ -1100,9 +1389,13 @@ aihirebox-company-recsys/
 - `company_embedding.py` 提供核心 `CompanyEmbedder` 类，用于生成向量嵌入
 - `company_recommender.py` 提供核心 `CompanyRecommender` 类，实现多维度推荐和头部抑制
 - `simple_recommender.py` 提供简化版 `SimpleRecallRecommender` 类，用于 5 规则粗排召回
+- `article_generator/` 提供三层文章生成系统：Web Search → Reranker → Article Writer
 - `run_tagging.py` 是生产用的标签提取脚本，默认启用 web search
 - `run_embedding.py` 是生产用的向量嵌入脚本，使用 Jina Embeddings v4
 - `run_recommender.py` 是生产用的推荐脚本，支持多维度推荐和头部抑制
 - `run_simple_recommender.py` 是简化版召回脚本，输出 JSON 供 LLM 精排使用
+- `run_web_search_cache.py` 执行 Web Search 并缓存结果
+- `run_reranker.py` 执行 LLM 精排
+- `run_article_writer.py` 生成多风格文章
 - 多选字段使用 `|` 分隔，便于 pandas 解析
 - 网络调用需要有效的 API key 和网络连接

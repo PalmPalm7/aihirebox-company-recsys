@@ -177,7 +177,7 @@ class CompanyTagger:
     team_background accuracy.
     """
     
-    DEFAULT_MODEL = "openai/gpt-4o-mini"
+    DEFAULT_MODEL = "openai/gpt-5-mini"
     
     def __init__(
         self,
@@ -578,7 +578,7 @@ Examples:
   python company_tagging.py data/aihirebox_company_list.csv --workers 3
   
   # Use web search for better team_background accuracy
-  python company_tagging.py data/aihirebox_company_list.csv --model openai/gpt-4o-mini:online
+  python company_tagging.py data/aihirebox_company_list.csv --model openai/gpt-5-mini:online
         """
     )
     parser.add_argument(

@@ -7,11 +7,11 @@ using LLM models. Supports web search enhancement via OpenRouter's :online suffi
 for better team_background accuracy. Also supports incremental updates via --merge.
 
 Usage:
-    # Basic usage with default model (openai/gpt-4o-mini:online)
+    # Basic usage with default model (openai/gpt-5-mini:online)
     python run_tagging.py data/aihirebox_company_list_sample.csv
 
     # Use baseline model without web search
-    python run_tagging.py data/aihirebox_company_list_sample.csv --model openai/gpt-4o-mini
+    python run_tagging.py data/aihirebox_company_list_sample.csv --model openai/gpt-5-mini
 
     # Incremental mode - merge new tags with existing ones
     python run_tagging.py data/aihirebox_company_list.csv --merge output_production/
@@ -49,7 +49,7 @@ from company_tagging import (
 
 
 # Default model with web search enabled for better team_background
-DEFAULT_MODEL = "openai/gpt-4o-mini:online"
+DEFAULT_MODEL = "openai/gpt-5-mini:online"
 
 # Available models
 AVAILABLE_MODELS = [
@@ -157,7 +157,7 @@ Examples:
   python run_tagging.py data/aihirebox_company_list_sample.csv
   
   # Use baseline model without web search
-  python run_tagging.py data/aihirebox_company_list_sample.csv --model openai/gpt-4o-mini
+  python run_tagging.py data/aihirebox_company_list_sample.csv --model openai/gpt-5-mini
   
   # Limit companies for testing
   python run_tagging.py data/aihirebox_company_list_sample.csv --limit 5
