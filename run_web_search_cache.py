@@ -120,8 +120,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--model",
         type=str,
-        default="google/gemini-3-flash-preview",
-        help="Model to use (default: google/gemini-3-flash-preview)",
+        default="openai/gpt-5-mini:online",
+        help="Model to use (default: openai/gpt-5-mini:online)",
     )
     parser.add_argument(
         "--quiet",
