@@ -10,13 +10,16 @@ Article Writer - Layer 2
 - xiaohongshu: 轻松、口语化、分点列举
 - linkedin: 职场视角、强调机会
 - zhihu: 知识分享、逻辑清晰
+
+支持并行调用 OpenRouter API 加速生成。
 """
 
 import json
 import os
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from openai import OpenAI
 
@@ -35,6 +38,7 @@ class ArticleWriter:
     """
     
     DEFAULT_MODEL = "google/gemini-3-flash-preview"
+    PROMPTS_DIR = Path(__file__).parent.parent / "prompts" / "article_styles"
     
     def __init__(
         self,
@@ -56,6 +60,29 @@ class ArticleWriter:
             api_key=self.api_key,
         )
         self.model = model or self.DEFAULT_MODEL
+        
+        # 缓存已加载的 prompt 文件
+        self._prompt_cache: Dict[str, str] = {}
+    
+    def _load_style_prompt(self, style_id: str) -> Optional[str]:
+        """从 prompts/article_styles/ 目录加载风格 prompt
+        
+        Args:
+            style_id: 风格ID (36kr, huxiu, etc.)
+            
+        Returns:
+            prompt 内容，如果文件不存在返回 None
+        """
+        if style_id in self._prompt_cache:
+            return self._prompt_cache[style_id]
+        
+        prompt_file = self.PROMPTS_DIR / f"{style_id}.md"
+        if prompt_file.exists():
+            with open(prompt_file, "r", encoding="utf-8") as f:
+                content = f.read()
+            self._prompt_cache[style_id] = content
+            return content
+        return None
     
     def _build_article_prompt(
         self,
@@ -65,6 +92,9 @@ class ArticleWriter:
         query_company_details: str = "",
     ) -> str:
         """构建文章生成 prompt
+        
+        优先从 prompts/article_styles/{style_id}.md 加载完整 prompt，
+        如果文件不存在则使用 styles.py 中的简化配置。
         
         Args:
             rerank_result: 精排结果
@@ -106,7 +136,41 @@ class ArticleWriter:
 {ws.search_summary[:1500]}
 """
         
-        # Emoji 指示
+        # 尝试从 md 文件加载完整 prompt
+        style_prompt = self._load_style_prompt(style.style_id)
+        
+        if style_prompt:
+            # 使用 md 文件中的完整 prompt
+            return f"""{style_prompt}
+
+---
+
+# 素材（请基于以下素材写作）
+
+**你要写的主线/角度**: {rerank_result.narrative_angle}
+
+**主角公司（重点写）**:
+{rerank_result.query_company_name}
+{query_company_details[:800] if query_company_details else '暂无详情'}
+{query_web_info}
+
+**相关公司（配角，灵活使用）**:
+{companies_text}
+
+---
+
+# 输出格式
+JSON格式，包含以下字段：
+```json
+{{
+  "title": "标题（如有多个备选，用 | 分隔）",
+  "content": "正文（markdown格式）",
+  "key_takeaways": ["要点1", "要点2", "要点3"]
+}}
+```
+"""
+        
+        # Fallback: 使用 styles.py 中的简化配置
         emoji_instruction = ""
         if style.use_emoji:
             emoji_instruction = """
@@ -118,7 +182,7 @@ class ArticleWriter:
 **重要**: 请勿使用任何 emoji，保持专业严肃的风格。
 """
         
-        return f"""你是{style.name_zh}的资深撰稿人。现在手里有一组公司素材，写一篇深度稿。
+        return f"""你是{style.name_zh}的一线记者，刚结束一轮公司/投资人采访。你在写报道，不是在写报告或研究摘要。现在基于素材写一篇能上首页的深度稿。
 
 ## 你的写作人设
 {style.tone}
@@ -398,6 +462,206 @@ JSON格式，三个字段：
             # 添加延迟
             if delay_seconds > 0:
                 time.sleep(delay_seconds)
+        
+        return articles
+
+    def _write_single_article_task(
+        self,
+        task: Dict[str, Any],
+        web_search_cache: Dict[str, WebSearchResult],
+        company_details_map: Dict[str, str],
+        output_dir: Optional[Path],
+    ) -> Tuple[str, Article]:
+        """单个文章生成任务（用于并行执行）
+        
+        文件保存到:
+        - output_dir/json/{base_filename}.json
+        - output_dir/markdown/{base_filename}.md
+        
+        Returns:
+            (base_filename, article) 元组，base_filename 不含扩展名
+        """
+        rr = task["rerank_result"]
+        style_id = task["style_id"]
+        base_filename = f"{rr.query_company_id}_{rr.rule_id}_{style_id}"
+        
+        # 生成文章
+        article = self.write_article(
+            rerank_result=rr,
+            style_id=style_id,
+            web_search_cache=web_search_cache,
+            query_company_details=company_details_map.get(rr.query_company_id, ""),
+        )
+        
+        # 保存文章到子目录
+        if output_dir:
+            # 创建 json/ 和 markdown/ 子目录
+            json_dir = output_dir / "json"
+            md_dir = output_dir / "markdown"
+            json_dir.mkdir(parents=True, exist_ok=True)
+            md_dir.mkdir(parents=True, exist_ok=True)
+            
+            # 保存 JSON 版本
+            json_file = json_dir / f"{base_filename}.json"
+            with open(json_file, "w", encoding="utf-8") as f:
+                json.dump({
+                    "query_company_id": article.query_company_id,
+                    "query_company_name": article.query_company_name,
+                    "rule_id": article.rule_id,
+                    "style": article.style,
+                    "title": article.title,
+                    "content": article.content,
+                    "word_count": article.word_count,
+                    "candidate_company_ids": article.candidate_company_ids,
+                    "key_takeaways": article.key_takeaways,
+                    "citations": article.citations,
+                    "generated_at": article.generated_at,
+                }, f, ensure_ascii=False, indent=2)
+            
+            # 保存 Markdown 版本
+            md_file = md_dir / f"{base_filename}.md"
+            with open(md_file, "w", encoding="utf-8") as f:
+                f.write(f"# {article.title}\n\n")
+                f.write(f"> 风格: {article.style} | 规则: {article.rule_id}\n")
+                f.write(f"> 推荐公司: {', '.join(article.candidate_company_ids)}\n\n")
+                f.write(article.content)
+                if article.key_takeaways:
+                    f.write("\n\n---\n\n## 核心要点\n\n")
+                    for takeaway in article.key_takeaways:
+                        f.write(f"- {takeaway}\n")
+        
+        return base_filename, article
+
+    def batch_write_parallel(
+        self,
+        rerank_results: List[RerankResult],
+        style_ids: List[str],
+        web_search_cache: Dict[str, WebSearchResult],
+        company_details_map: Dict[str, str],
+        max_workers: int = 5,
+        skip_existing: bool = True,
+        output_dir: Optional[Path] = None,
+        show_progress: bool = True,
+    ) -> List[Article]:
+        """并行批量生成文章
+        
+        使用 ThreadPoolExecutor 并行调用 OpenRouter API，大幅提升生成速度。
+        
+        Args:
+            rerank_results: 精排结果列表
+            style_ids: 风格ID列表
+            web_search_cache: Web 搜索缓存
+            company_details_map: {company_id: company_details}
+            max_workers: 最大并行数（默认 5）
+            skip_existing: 是否跳过已有文章
+            output_dir: 输出目录
+            show_progress: 是否显示进度
+            
+        Returns:
+            Article 列表
+        """
+        from tqdm import tqdm
+        
+        articles = []
+        
+        # 展开所有 (rerank_result, style) 对
+        all_tasks = []
+        for rr in rerank_results:
+            for style_id in style_ids:
+                all_tasks.append({
+                    "rerank_result": rr,
+                    "style_id": style_id,
+                })
+        
+        # 先过滤已存在的文章（检查 json/ 子目录）
+        tasks_to_process = []
+        json_dir = output_dir / "json" if output_dir else None
+        
+        for task in all_tasks:
+            rr = task["rerank_result"]
+            style_id = task["style_id"]
+            base_filename = f"{rr.query_company_id}_{rr.rule_id}_{style_id}"
+            
+            if skip_existing and json_dir:
+                json_file = json_dir / f"{base_filename}.json"
+                if json_file.exists():
+                    try:
+                        with open(json_file, "r", encoding="utf-8") as f:
+                            cached = json.load(f)
+                        articles.append(Article(
+                            query_company_id=cached["query_company_id"],
+                            query_company_name=cached["query_company_name"],
+                            rule_id=cached["rule_id"],
+                            style=cached["style"],
+                            title=cached["title"],
+                            content=cached["content"],
+                            word_count=cached.get("word_count", 0),
+                            candidate_company_ids=cached.get("candidate_company_ids", []),
+                            key_takeaways=cached.get("key_takeaways", []),
+                            citations=cached.get("citations", []),
+                            generated_at=cached.get("generated_at", ""),
+                        ))
+                        continue
+                    except Exception:
+                        pass
+            
+            tasks_to_process.append(task)
+        
+        if not tasks_to_process:
+            if show_progress:
+                print(f"All {len(all_tasks)} articles already exist, skipping generation.")
+            return articles
+        
+        if show_progress:
+            print(f"Generating {len(tasks_to_process)} articles with {max_workers} parallel workers...")
+            print(f"(Skipped {len(all_tasks) - len(tasks_to_process)} existing articles)")
+        
+        # 并行执行
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # 提交所有任务
+            future_to_task = {
+                executor.submit(
+                    self._write_single_article_task,
+                    task,
+                    web_search_cache,
+                    company_details_map,
+                    output_dir,
+                ): task
+                for task in tasks_to_process
+            }
+            
+            # 收集结果
+            if show_progress:
+                iterator = tqdm(
+                    as_completed(future_to_task),
+                    total=len(tasks_to_process),
+                    desc="Writing articles (parallel)",
+                )
+            else:
+                iterator = as_completed(future_to_task)
+            
+            for future in iterator:
+                try:
+                    _base_filename, article = future.result()
+                    articles.append(article)
+                except Exception as e:
+                    task = future_to_task[future]
+                    rr = task["rerank_result"]
+                    style_id = task["style_id"]
+                    print(f"Error generating {rr.query_company_id}_{rr.rule_id}_{style_id}: {e}")
+                    # 创建错误文章
+                    articles.append(Article(
+                        query_company_id=rr.query_company_id,
+                        query_company_name=rr.query_company_name,
+                        rule_id=rr.rule_id,
+                        style=style_id,
+                        title="生成失败",
+                        content=f"Error: {str(e)}",
+                        word_count=0,
+                        candidate_company_ids=[sc.company_id for sc in rr.selected_companies],
+                        key_takeaways=[],
+                        citations=[],
+                    ))
         
         return articles
 
