@@ -1,0 +1,44 @@
+# Docker Compose for local development
+#
+# Usage:
+#   docker-compose up --build      # Build and start
+#   docker-compose up -d           # Start in background
+#   docker-compose logs -f api     # View logs
+#   docker-compose down            # Stop and remove containers
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    volumes:
+      # Mount output_production as read-only for serving articles
+      - ./output_production:/app/output_production:ro
+    environment:
+      - ARTICLES_DIR=/app/output_production/article_generator/articles
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 5s
+    restart: unless-stopped
+
+  # Optional: Pipeline runner for batch processing
+  # Uncomment and configure for scheduled pipeline runs
+  # pipeline:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile.pipeline
+  #   volumes:
+  #     - ./data:/app/data:ro
+  #     - ./output_production:/app/output_production
+  #   environment:
+  #     - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+  #     - JINA_API_KEY=${JINA_API_KEY}
+  #   profiles:
+  #     - pipeline  # Only start with: docker-compose --profile pipeline up
+
+

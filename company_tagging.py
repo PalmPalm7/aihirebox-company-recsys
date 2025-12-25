@@ -32,110 +32,50 @@ from tqdm import tqdm
 # Tag Taxonomy Definition (MECE)
 # ============================================================================
 
-TAG_TAXONOMY = {
-    "industry": {
-        "name_zh": "行业领域",
-        "name_en": "Industry/Domain",
-        "options": [
-            "ai_llm",           # AI/大模型
-            "robotics",         # 机器人/具身智能
-            "edtech",           # 教育科技
-            "fintech",          # 金融科技
-            "healthtech",       # 医疗健康
-            "enterprise_saas",  # 企业服务/SaaS
-            "ecommerce",        # 电商/零售
-            "gaming",           # 游戏/娱乐
-            "social",           # 社交/社区
-            "semiconductor",    # 半导体/芯片
-            "automotive",       # 汽车/出行
-            "consumer_hw",      # 消费电子/硬件
-            "cloud_infra",      # 云计算/基础设施
-            "content_media",    # 内容/媒体
-            "biotech",          # 生物科技
-            "investment",       # 投资/金融服务
-            "other",            # 其他
-        ],
-        "multi_select": True,
-    },
-    "business_model": {
-        "name_zh": "商业模式",
-        "name_en": "Business Model",
-        "options": [
-            "b2b",              # 企业服务
-            "b2c",              # 消费者服务
-            "b2b2c",            # 混合模式
-            "platform",         # 平台模式
-            "saas",             # SaaS订阅
-            "hardware",         # 硬件产品
-            "marketplace",      # 市场平台
-            "consulting",       # 咨询服务
-        ],
-        "multi_select": True,
-    },
-    "target_market": {
-        "name_zh": "目标市场",
-        "name_en": "Target Market",
-        "options": [
-            "china_domestic",   # 国内市场
-            "global",           # 全球市场
-            "sea",              # 东南亚
-            "us",               # 北美
-            "europe",           # 欧洲
-            "japan_korea",      # 日韩
-            "latam",            # 拉美
-            "mena",             # 中东北非
-        ],
-        "multi_select": True,
-    },
-    "company_stage": {
-        "name_zh": "发展阶段",
-        "name_en": "Company Stage",
-        "options": [
-            "seed",             # 种子轮/天使轮
-            "early",            # 早期(A/B轮)
-            "growth",           # 成长期(C轮+)
-            "pre_ipo",          # Pre-IPO
-            "public",           # 已上市
-            "bigtech_subsidiary", # 大厂子公司
-            "profitable",       # 已盈利
-            "unknown",          # 未知
-        ],
-        "multi_select": False,
-    },
-    "tech_focus": {
-        "name_zh": "技术方向",
-        "name_en": "Technology Focus",
-        "options": [
-            "llm_foundation",   # 大语言模型/基础模型
-            "computer_vision",  # 计算机视觉
-            "speech_nlp",       # 语音/NLP
-            "embodied_ai",      # 具身智能
-            "aigc",             # AIGC/内容生成
-            "3d_graphics",      # 3D/图形学
-            "chip_hardware",    # 芯片/硬件
-            "data_infra",       # 数据/基础设施
-            "autonomous",       # 自动驾驶/自主系统
-            "blockchain",       # 区块链/Web3
-            "quantum",          # 量子计算
-            "not_tech_focused", # 非技术驱动
-        ],
-        "multi_select": True,
-    },
-    "team_background": {
-        "name_zh": "团队背景",
-        "name_en": "Team Background",
-        "options": [
-            "bigtech_alumni",   # 大厂背景(BAT/TMD/Google等)
-            "top_university",   # 顶尖高校(清北/藤校等)
-            "serial_entrepreneur", # 连续创业者
-            "academic",         # 学术背景/教授创业
-            "industry_expert",  # 行业专家
-            "international",    # 海归/国际化背景
-            "unknown",          # 未知
-        ],
-        "multi_select": True,
-    },
-}
+# 标签分类配置文件路径
+TAG_TAXONOMY_FILE = Path(__file__).parent / "tag_taxonomy.json"
+
+
+def load_tag_taxonomy(taxonomy_file: Path = TAG_TAXONOMY_FILE) -> Dict[str, Any]:
+    """
+    从 JSON 文件加载标签分类配置。
+    
+    JSON 格式中 options 为 {tag_key: tag_zh} 的映射，
+    返回时转换为兼容旧格式的 list。
+    """
+    with open(taxonomy_file, "r", encoding="utf-8") as f:
+        raw_taxonomy = json.load(f)
+    
+    # 转换为兼容旧格式：options 从 dict 转为 list
+    taxonomy = {}
+    for dimension, config in raw_taxonomy.items():
+        taxonomy[dimension] = {
+            "name_zh": config["name_zh"],
+            "name_en": config["name_en"],
+            "options": list(config["options"].keys()),
+            "options_zh": config["options"],  # 保留中文映射
+            "multi_select": config["multi_select"],
+        }
+    return taxonomy
+
+
+def get_tag_zh(dimension: str, tag_key: str) -> str:
+    """获取标签的中文名称。"""
+    if dimension in TAG_TAXONOMY and tag_key in TAG_TAXONOMY[dimension].get("options_zh", {}):
+        return TAG_TAXONOMY[dimension]["options_zh"][tag_key]
+    return tag_key
+
+
+def get_all_tags_zh() -> Dict[str, Dict[str, str]]:
+    """获取所有维度的标签中文映射。"""
+    return {
+        dimension: config.get("options_zh", {})
+        for dimension, config in TAG_TAXONOMY.items()
+    }
+
+
+# 加载标签分类
+TAG_TAXONOMY = load_tag_taxonomy()
 
 
 # ============================================================================
@@ -363,6 +303,7 @@ JSON格式示例：
         max_workers: int = 5,
         show_progress: bool = True,
         delay_seconds: float = 0.0,
+        on_result: Optional[callable] = None,
     ) -> List[CompanyTags]:
         """Extract tags for multiple companies.
         
@@ -371,22 +312,27 @@ JSON格式示例：
             max_workers: Number of parallel workers (ignored if delay_seconds > 0)
             show_progress: Whether to show progress bar
             delay_seconds: Delay between requests (enables sequential mode, recommended for :online)
+            on_result: Optional callback called after each result, signature: (result, index, total) -> None
+                       Use this for incremental saving / checkpointing.
         
         Returns:
             List of CompanyTags results
         """
         results = []
+        total = len(companies)
         
         # Use sequential processing if delay is specified (for web search rate limiting)
         if delay_seconds > 0 or self.is_online:
             actual_delay = delay_seconds if delay_seconds > 0 else 0.5
-            iterator = companies
+            iterator = enumerate(companies)
             if show_progress:
-                iterator = tqdm(companies, desc=f"Tagging with {self.model}")
+                iterator = tqdm(enumerate(companies), total=total, desc=f"Tagging with {self.model}")
             
-            for company in iterator:
+            for idx, company in iterator:
                 result = self.tag_company(company)
                 results.append(result)
+                if on_result:
+                    on_result(result, idx, total)
                 if actual_delay > 0:
                     time.sleep(actual_delay)
         else:
@@ -399,19 +345,24 @@ JSON格式示例：
                 
                 iterator = as_completed(future_to_company)
                 if show_progress:
-                    iterator = tqdm(iterator, total=len(companies), desc="Tagging companies")
+                    iterator = tqdm(iterator, total=total, desc="Tagging companies")
                 
-                for future in iterator:
+                for idx, future in enumerate(iterator):
                     try:
                         result = future.result()
                         results.append(result)
+                        if on_result:
+                            on_result(result, idx, total)
                     except Exception as e:
                         company = future_to_company[future]
-                        results.append(CompanyTags(
+                        error_result = CompanyTags(
                             company_id=company.company_id,
                             company_name=company.company_name,
                             raw_reasoning=f"Error: {str(e)}",
-                        ))
+                        )
+                        results.append(error_result)
+                        if on_result:
+                            on_result(error_result, idx, total)
         
         # Sort by company_id to maintain order
         results.sort(key=lambda x: x.company_id)

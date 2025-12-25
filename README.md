@@ -2,7 +2,7 @@
 
 该项目构造AI职小盒旗下智能体公司咨询推荐模块，部分代码和文档由Claude Code/Codex等copilot agent修正、生成。
 
-This repository provides a Python-based agentic workflow for company recommendation and article generation:
+核心模块为这三点
 
 1. **Feature Engineering** - LLM-based company tagging and Jina Embeddings for semantic representation
 2. **Recommendation Engine** - Multi-dimensional company recommendation with head suppression
@@ -84,13 +84,280 @@ output_production/
     ├── web_search_cache/       # Web 搜索缓存
     ├── rerank_cache/           # LLM 精排缓存
     └── articles/               # 生成的文章
+        ├── index.json          # 文章索引（按公司分组）
+        ├── json/               # JSON 格式
+        └── markdown/           # Markdown 格式
 ```
 
 **容器化挂载**：只需挂载两个目录：
 - `data/` - 源数据 CSV
 - `output_production/` - 所有生产数据
 
-### 数据分析工具
+## 项目流程图
+
+```mermaid
+flowchart TB
+    subgraph input[输入数据]
+        csv[aihirebox_company_list.csv<br/>公司列表 CSV]
+    end
+    
+    subgraph fe[Feature Engineering 特征工程]
+        step1[Step 1: Company Tagging<br/>标签提取<br/>LLM 提取 6 维标签]
+        step2[Step 2: Company Embedding<br/>向量嵌入<br/>Jina Embeddings v4]
+    end
+    
+    subgraph rec[Recommendation Engine 推荐引擎]
+        step3a[Step 3a: Company Recommender<br/>多维度推荐<br/>带头部抑制]
+        step3b[Step 3b: Simple Recall<br/>简化召回<br/>5 规则粗排]
+    end
+    
+    subgraph article[Article Generation 文章生成]
+        step4[Step 4: Web Search<br/>Web 搜索缓存<br/>gpt-5-mini:online + Exa.ai]
+        step5[Step 5: LLM Reranker<br/>精排 Top 5<br/>gpt-5-mini]
+        step6[Step 6: Article Writer<br/>多风格文章生成<br/>gemini-3-flash-preview]
+    end
+    
+    subgraph output[输出结果]
+        out1[company_tags.json<br/>company_tags.csv]
+        out2[company_embeddings.npy<br/>company_embeddings.json]
+        out3a[recommendations.json<br/>多维度推荐结果]
+        out3b[recall_results.json<br/>召回结果]
+        out4[web_search_cache/<br/>公司研究报告]
+        out5[rerank_cache/<br/>精排结果]
+        out6[articles/<br/>多风格文章]
+    end
+    
+    csv --> step1
+    csv --> step2
+    
+    step1 --> out1
+    step2 --> out2
+    
+    out1 --> step3a
+    out2 --> step3a
+    out1 --> step3b
+    out2 --> step3b
+    
+    step3a --> out3a
+    step3b --> out3b
+    
+    csv --> step4
+    step4 --> out4
+    
+    out3b --> step5
+    out4 --> step5
+    step5 --> out5
+    
+    out4 --> step6
+    out5 --> step6
+    step6 --> out6
+    
+    style csv fill:#e1f5ff
+    style step1 fill:#fff4e1
+    style step2 fill:#fff4e1
+    style step3a fill:#e8f5e9
+    style step3b fill:#e8f5e9
+    style step4 fill:#f3e5f5
+    style step5 fill:#f3e5f5
+    style step6 fill:#f3e5f5
+    style out1 fill:#ffebee
+    style out2 fill:#ffebee
+    style out3a fill:#ffebee
+    style out3b fill:#ffebee
+    style out4 fill:#ffebee
+    style out5 fill:#ffebee
+    style out6 fill:#ffebee
+```
+
+**流程说明**：
+1. **特征工程阶段**：从 CSV 提取标签和生成向量嵌入
+2. **推荐引擎阶段**：基于标签和向量进行推荐（多维度推荐或简化召回）
+3. **文章生成阶段**：Web 搜索 → LLM 精排 → 多风格文章生成（可选流程）
+
+---
+
+# Production Pipeline
+
+以下是生产环境的完整工作流，包含 **标签提取 → 向量嵌入 → 公司召回 → 文章生成** 四个阶段。
+
+> **注意**：所有生产数据默认输出到 `output_production/` 目录，详见 [数据目录结构](#数据目录结构)。详细参数说明见各模块的详细文档。
+
+## Production Pipeline Summary
+
+> 所有生产数据统一存放在 `output_production/` 目录（按模块分子文件夹），详见 [数据目录结构](#数据目录结构)。
+
+### 文章生成输出结构
+
+文章生成后的目录结构：
+
+```
+output_production/article_generator/articles/
+├── index.json              # 详细索引（按公司分组，含所有文章元数据）
+├── json/                   # JSON 格式文章
+│   ├── cid_100_R1_industry_36kr.json
+│   ├── cid_100_R2_tech_focus_36kr.json
+│   └── ...
+└── markdown/               # Markdown 格式文章
+    ├── cid_100_R1_industry_36kr.md
+    ├── cid_100_R2_tech_focus_36kr.md
+    └── ...
+```
+
+`index.json` 包含每次生成的完整元数据，按公司分组索引所有文章。
+
+---
+
+### 场景 1: 全量更新（初次运行或防止 Data Drift）
+
+**适用场景**：
+- 首次初始化系统
+- 定期全量更新（如每月/每季度）防止数据漂移
+- 修复数据质量问题需要重新生成
+
+#### 基础流程（标签提取 → 向量嵌入 → 召回）
+
+```bash
+# Step 1: 全量标签提取（覆盖已有数据）
+python run_tagging.py data/aihirebox_company_list.csv \
+    --model openai/gpt-5-mini:online --no-reasoning
+
+# Step 2: 全量向量嵌入（覆盖已有数据）
+python run_embedding.py data/aihirebox_company_list.csv
+
+# Step 3: 全量召回（重新计算所有公司的推荐关系）
+python run_simple_recommender.py --all \
+    --output-dir output_production/simple_recall
+```
+
+#### 文章生成流程（可选）
+
+```bash
+# Step 4: Web Search 缓存（重新搜索所有公司，不加 --skip-existing）
+python run_web_search_cache.py \
+    --company-csv data/aihirebox_company_list.csv \
+    --output-dir output_production/article_generator/web_search_cache
+
+# Step 5: LLM 精排（重新精排所有结果，不加 --skip-existing）
+python run_reranker.py \
+    --recall-results output_production/simple_recall/recall_results.json \
+    --web-cache-dir output_production/article_generator/web_search_cache \
+    --output-dir output_production/article_generator/rerank_cache
+
+# Step 6: 生成文章（并行模式，20 并发）
+# 输出到 articles/json/ 和 articles/markdown/，生成 index.json
+python run_article_writer.py \
+    --rerank-dir output_production/article_generator/rerank_cache \
+    --web-cache-dir output_production/article_generator/web_search_cache \
+    --output-dir output_production/article_generator/articles \
+    --concurrency 20 \
+    --styles 36kr
+```
+
+---
+
+### 场景 2: 增量更新（新公司加入）
+
+**适用场景**：
+- 有新公司加入数据库
+- 需要更新新公司的标签、向量、召回和文章
+
+**重要**：新公司加入后，**必须重新运行全量召回**，因为新公司可能影响现有公司的推荐关系。
+
+#### 基础流程
+
+```bash
+# Step 1: 增量标签提取（只处理新公司，自动检测或指定）
+# 方式 1: 自动检测新公司（推荐）
+python run_tagging.py data/aihirebox_company_list.csv \
+    --merge output_production/company_tagging \
+    --model openai/gpt-5-mini:online --quiet --no-reasoning
+
+# 方式 2: 指定新公司 ID
+python run_tagging.py data/aihirebox_company_list.csv \
+    --company-ids cid_new_1 cid_new_2 \
+    --merge output_production/company_tagging \
+    --model openai/gpt-5-mini:online --quiet --no-reasoning
+
+# Step 2: 增量向量嵌入（只处理新公司）
+python run_embedding.py data/aihirebox_company_list.csv \
+    --merge output_production/company_embedding
+
+# Step 3: 全量召回（重要：必须重新计算所有公司的推荐关系）
+python run_simple_recommender.py --all \
+    --output-dir output_production/simple_recall
+```
+
+#### 文章生成流程（增量）
+
+```bash
+# Step 4: Web Search 缓存（只搜索新公司）
+python run_web_search_cache.py \
+    --company-csv data/aihirebox_company_list.csv \
+    --company-ids cid_new_1 cid_new_2 \
+    --output-dir output_production/article_generator/web_search_cache
+
+# Step 5: LLM 精排（只精排新公司的召回结果）
+python run_reranker.py \
+    --recall-results output_production/simple_recall/recall_results.json \
+    --company-ids cid_new_1 cid_new_2 \
+    --web-cache-dir output_production/article_generator/web_search_cache \
+    --output-dir output_production/article_generator/rerank_cache
+
+# Step 6: 生成文章（只生成新公司的文章，--skip-existing 跳过已有）
+python run_article_writer.py \
+    --rerank-dir output_production/article_generator/rerank_cache \
+    --company-ids cid_new_1 cid_new_2 \
+    --web-cache-dir output_production/article_generator/web_search_cache \
+    --output-dir output_production/article_generator/articles \
+    --concurrency 20 \
+    --skip-existing \
+    --styles 36kr
+```
+
+---
+
+### 场景 3: 部分更新（仅更新 Web Search 缓存）
+
+**适用场景**：
+- 定期更新公司信息（如每月更新一次）
+- 只需要刷新 Web Search 缓存，其他数据保持不变
+- 成本优化：只更新需要更新的部分
+
+#### 更新 Web Search 缓存
+
+```bash
+# 重新搜索所有公司（不加 --skip-existing 会覆盖已有缓存）
+python run_web_search_cache.py \
+    --company-csv data/aihirebox_company_list.csv \
+    --output-dir output_production/article_generator/web_search_cache
+```
+
+**注意**：
+- 此操作只更新 Web Search 缓存，不影响标签、向量、召回结果
+- 如果需要基于新的 Web Search 结果重新生成文章，需要：
+  1. 重新运行精排（使用新的 Web Search 缓存）
+  2. 重新生成文章
+
+#### 可选：基于新 Web Search 重新生成文章
+
+```bash
+# 重新精排（使用新的 Web Search 缓存，不加 --skip-existing）
+python run_reranker.py \
+    --recall-results output_production/simple_recall/recall_results.json \
+    --web-cache-dir output_production/article_generator/web_search_cache \
+    --output-dir output_production/article_generator/rerank_cache
+
+# 重新生成文章（不加 --skip-existing）
+python run_article_writer.py \
+    --rerank-dir output_production/article_generator/rerank_cache \
+    --web-cache-dir output_production/article_generator/web_search_cache \
+    --output-dir output_production/article_generator/articles \
+    --styles 36kr xiaohongshu
+```
+
+---
+
+## 数据分析工具
 
 使用 Jupyter Notebook 分析推荐结果质量：
 
@@ -140,27 +407,41 @@ Core module for extracting MECE (Mutually Exclusive, Collectively Exhaustive) ta
 ### Basic Usage
 
 ```bash
-# Process all companies (outputs to output/company_tags_<timestamp>/)
-python company_tagging.py data/aihirebox_company_list.csv
+# 全量处理（生产用，默认输出到 output_production/company_tagging/）
+python run_tagging.py data/aihirebox_company_list.csv \
+    --model openai/gpt-5-mini:online --quiet --no-reasoning
 
-# Specify output directory
-python company_tagging.py data/aihirebox_company_list.csv --output-dir ./tags_output
+# 处理指定公司（支持 --company-ids 或 --company-ids-json）
+python run_tagging.py data/aihirebox_company_list.csv \
+    --company-ids cid_0 cid_1 --merge output_production/company_tagging
 
-# Process specific companies by ID
-python company_tagging.py data/aihirebox_company_list.csv --company-ids cid_0 cid_1 cid_2
-
-# Process companies from JSON file (supports {"company_ids": [...]} or [...])
-python company_tagging.py data/aihirebox_company_list.csv --company-ids-json my_companies.json
-
-# Combine both ID sources
-python company_tagging.py data/aihirebox_company_list.csv --company-ids cid_0 --company-ids-json more_ids.json
-
-# Limit for testing
-python company_tagging.py data/aihirebox_company_list.csv --limit 10
-
-# Use web search for better team_background accuracy
-python company_tagging.py data/aihirebox_company_list.csv --model openai/gpt-5-mini:online
+# 增量更新（自动检测新公司）
+python run_tagging.py data/aihirebox_company_list.csv \
+    --merge output_production/company_tagging \
+    --model openai/gpt-5-mini:online --quiet --no-reasoning
 ```
+
+### Checkpoint & Resume（断点续传）
+
+脚本默认每处理 10 家公司就保存一次中间结果，防止中断导致数据丢失：
+
+```bash
+# 自定义 checkpoint 间隔（每 5 家公司保存一次）
+python run_tagging.py data/aihirebox_company_list.csv --checkpoint-interval 5
+
+# 从上次中断的地方继续（自动跳过已处理的公司）
+python run_tagging.py data/aihirebox_company_list.csv --resume
+
+# 结合使用：处理大量公司时，每 20 家保存一次
+python run_tagging.py data/aihirebox_company_list.csv \
+    --checkpoint-interval 20 --resume
+```
+
+**工作原理**：
+- 每处理 N 家公司，自动保存 `company_tags.csv` 和 `company_tags.json`
+- 如果程序中断（Ctrl+C 或错误），已处理的公司不会丢失
+- 使用 `--resume` 重新运行时，自动跳过已处理的公司
+- 与 `--merge` 模式兼容，可以在增量更新时也使用 checkpoint
 
 ### Output Format
 
@@ -196,29 +477,19 @@ cid_0,Apex Context,ai_llm|content_media,b2c|saas,global,early,llm_foundation|aig
 ### Basic Usage
 
 ```bash
-# 处理所有公司
+# 全量处理（默认输出到 output_production/company_embedding/）
 python run_embedding.py data/aihirebox_company_list.csv
 
-# 指定输出目录
-python run_embedding.py data/aihirebox_company_list.csv --output-dir ./output_embeddings
+# 处理指定公司（支持 --company-ids 或 --company-ids-json）
+python run_embedding.py data/aihirebox_company_list.csv \
+    --company-ids cid_0 cid_1 --merge output_production/company_embedding
 
-# 自定义维度（更大 = 更精确，更小 = 更快）
+# 增量更新（自动检测新公司）
+python run_embedding.py data/aihirebox_company_list.csv \
+    --merge output_production/company_embedding
+
+# 自定义参数（--dimensions, --quiet, --resume 等）
 python run_embedding.py data/aihirebox_company_list.csv --dimensions 2048
-
-# 处理特定公司
-python run_embedding.py data/aihirebox_company_list.csv --company-ids cid_0 cid_1
-
-# 从 JSON 文件读取公司 ID
-python run_embedding.py data/aihirebox_company_list.csv --company-ids-json data/my_companies.json
-
-# 测试模式（限制数量）
-python run_embedding.py data/aihirebox_company_list.csv --limit 10
-
-# 静默模式（生产用）
-python run_embedding.py data/aihirebox_company_list.csv --quiet
-
-# 断点续传
-python run_embedding.py data/aihirebox_company_list.csv --output-dir ./embeddings --resume
 ```
 
 ### Output Format
@@ -296,256 +567,126 @@ JINA_API_KEY=your_jina_api_key_here
 
 ---
 
-# Production Pipeline
-
-以下是生产环境的完整工作流，包含 **标签提取 → 向量嵌入 → 公司推荐** 三个步骤。
-
-## Step 1: Company Tagging (标签提取)
-
-使用 LLM 提取公司的 MECE 标签（industry, business_model, target_market, company_stage, tech_focus, team_background）。
-
-### 1.1 全量标签提取
-
-处理所有公司，用于首次初始化或全量更新。默认输出到 `output_production/company_tagging/`。
-
-```bash
-python run_tagging.py data/aihirebox_company_list.csv \
-    --model openai/gpt-5-mini:online \
-    --quiet \
-    --no-reasoning
-```
-
-| 项目 | 路径/值 |
-|------|---------|
-| **Input CSV** | `data/aihirebox_company_list.csv` |
-| **Model** | `openai/gpt-5-mini:online` (带 web search) |
-| **Output Dir** | `output_production/company_tagging/` (默认) |
-| **Output Files** | `company_tags.csv`, `company_tags.json`, `run_metadata.json` |
-
-### 1.2 增量标签提取
-
-新增公司时，使用 `--merge` 选项与现有 tags 合并：
-
-```bash
-# 方式 1: 自动检测新公司（CSV 中有但 tags 中没有的公司）
-python run_tagging.py data/aihirebox_company_list.csv \
-    --model openai/gpt-5-mini:online \
-    --quiet \
-    --no-reasoning \
-    --merge output_production/company_tagging
-
-# 方式 2: 指定新公司 ID
-python run_tagging.py data/aihirebox_company_list.csv \
-    --company-ids cid_133 cid_134 cid_135 \
-    --model openai/gpt-5-mini:online \
-    --quiet \
-    --no-reasoning \
-    --merge output_production/company_tagging
-```
-
-| 项目 | 路径/值 |
-|------|---------|
-| **Input CSV** | `data/aihirebox_company_list.csv` (包含新公司) |
-| **Existing Data** | `--merge output_production/company_tagging` |
-| **Output Dir** | 默认与 `--merge` 同目录（原地更新） |
-| **Behavior** | 只处理新公司，与现有 tags 合并 |
-
-> **Note**: 增量模式会自动跳过已有 tag 的公司，只处理新公司，然后合并保存。
-
----
-
-## Step 2: Company Embedding (向量嵌入)
-
-使用 Jina Embeddings v4 对 company_name + location + company_details 进行语义编码。
-
-### 2.1 全量向量嵌入
-
-首次运行时，生成所有公司的向量。默认输出到 `output_production/company_embedding/`。
-
-```bash
-python run_embedding.py data/aihirebox_company_list.csv
-```
-
-| 项目 | 路径/值 |
-|------|---------|
-| **Input CSV** | `data/aihirebox_company_list.csv` |
-| **Output Dir** | `output_production/company_embedding/` (默认) |
-| **Output Files** | `company_embeddings.npy`, `company_embeddings.mapping.json`, `company_embeddings.csv`, `company_embeddings.json` |
-| **Dimensions** | 1024 (默认) |
-
-### 2.2 增量向量嵌入
-
-新增公司时，使用 `--merge` 选项与现有 embeddings 合并：
-
-```bash
-# 方式 1: 自动检测新公司（CSV 中有但 embeddings 中没有的公司）
-python run_embedding.py data/aihirebox_company_list.csv \
-    --merge output_production/company_embedding
-
-# 方式 2: 指定新公司 ID
-python run_embedding.py data/aihirebox_company_list.csv \
-    --company-ids cid_new_1 cid_new_2 \
-    --merge output_production/company_embedding
-```
-
-| 项目 | 路径/值 |
-|------|---------|
-| **Input CSV** | `data/aihirebox_company_list.csv` (包含新公司) |
-| **Existing Data** | `--merge output_production/company_embedding` |
-| **Output Dir** | 默认与 `--merge` 同目录（原地更新） |
-| **Behavior** | 只处理新公司，与现有 embeddings 合并 |
-
-> **Note**: 增量模式会自动跳过已有 embedding 的公司，只处理新公司，然后合并保存。
-
----
-
-## Step 3: Company Recommendation (公司推荐)
-
-基于标签和向量嵌入生成多维度公司推荐。默认输出到 `output_production/recommender/`。
-
-### 3.1 单公司推荐
-
-```bash
-python run_recommender.py \
-    --company-id cid_100 \
-    --score-threshold 0.6 \
-    --print-only
-```
-
-| 项目 | 路径/值 |
-|------|---------|
-| **Input Tags** | `output_production/company_tagging/company_tags.json` (默认) |
-| **Input Embeddings** | `output_production/company_embedding/` (默认) |
-| **Query Company** | `cid_100` |
-| **Score Threshold** | `0.6` (低于此分数不推荐) |
-| **Output** | 控制台打印 |
-
-### 3.2 批量推荐 (所有公司)
-
-```bash
-python run_recommender.py \
-    --all \
-    --score-threshold 0.6
-```
-
-| 项目 | 路径/值 |
-|------|---------|
-| **Input Tags** | `output_production/company_tagging/company_tags.json` (默认) |
-| **Input Embeddings** | `output_production/company_embedding/` (默认) |
-| **Query Companies** | 全部公司 |
-| **Score Threshold** | `0.6` |
-| **Output Dir** | `output_production/recommender/` (默认) |
-| **Output Files** | `recommendations.json`, `run_metadata.json` |
-
-### 3.3 增量推荐 (指定公司)
-
-```bash
-python run_recommender.py \
-    --company-ids cid_133 cid_134 cid_135 \
-    --score-threshold 0.6
-```
-
-| 项目 | 路径/值 |
-|------|---------|
-| **Input Tags** | `output_production/company_tagging/company_tags.json` (需包含增量公司) |
-| **Input Embeddings** | `output_production/company_embedding/` (需包含增量公司) |
-| **Query Companies** | `cid_133 cid_134 cid_135` |
-| **Output Dir** | `output_production/recommender/` (默认) |
-
----
-
-## Production Pipeline Summary
-
-> 所有生产数据统一存放在 `output_production/` 目录（按模块分子文件夹），详见 [数据目录结构](#数据目录结构)。
-
-### 全量运行（所有公司）
-
-处理 CSV 中的所有公司，输出到各自的子文件夹：
-
-```bash
-# Step 1: 全量标签提取 -> output_production/company_tagging/
-python run_tagging.py data/aihirebox_company_list.csv \
-    --model openai/gpt-5-mini:online --quiet --no-reasoning
-
-# Step 2: 全量向量嵌入 -> output_production/company_embedding/
-python run_embedding.py data/aihirebox_company_list.csv
-
-# Step 3: 批量推荐（所有公司） -> output_production/recommender/
-python run_recommender.py --all --score-threshold 0.6
-```
-
-### 批量运行（指定公司列表）
-
-从 JSON 文件读取公司 ID 列表：
-
-```bash
-# 准备公司 ID 列表 (data/target_companies.json)
-# 格式: ["cid_100", "cid_101", "cid_102"] 或 {"company_ids": ["cid_100", ...]}
-
-# Step 1: 批量标签提取
-python run_tagging.py data/aihirebox_company_list.csv \
-    --company-ids-json data/target_companies.json \
-    --model openai/gpt-5-mini:online --quiet --no-reasoning \
-    --merge output_production/company_tagging
-
-# Step 2: 批量向量嵌入
-python run_embedding.py data/aihirebox_company_list.csv \
-    --company-ids-json data/target_companies.json \
-    --merge output_production/company_embedding
-
-# Step 3: 批量推荐
-python run_recommender.py \
-    --company-ids-json data/target_companies.json \
-    --score-threshold 0.6
-```
-
-### 命令行直接指定公司
-
-```bash
-# 处理指定的几个公司
-python run_tagging.py data/aihirebox_company_list.csv \
-    --company-ids cid_100 cid_101 cid_102 \
-    --merge output_production/company_tagging
-
-python run_embedding.py data/aihirebox_company_list.csv \
-    --company-ids cid_100 cid_101 cid_102 \
-    --merge output_production/company_embedding
-
-python run_recommender.py \
-    --company-ids cid_100 cid_101 cid_102
-```
-
-### 增量更新流程
-
-当有新公司加入时：
-
-```bash
-# 1. 更新 CSV：将新公司添加到 data/aihirebox_company_list.csv
-
-# 2. 增量标签提取（自动检测新公司，合并到 company_tagging/）
-python run_tagging.py data/aihirebox_company_list.csv \
-    --model openai/gpt-5-mini:online --quiet --no-reasoning \
-    --merge output_production/company_tagging
-
-# 3. 增量向量嵌入（自动检测新公司，合并到 company_embedding/）
-python run_embedding.py data/aihirebox_company_list.csv \
-    --merge output_production/company_embedding
-
-# 4. 生成新公司的推荐
-python run_recommender.py --company-ids cid_new_1 cid_new_2
-```
-
-**简化版（指定新公司 ID）**：
-
-```bash
-python run_tagging.py data/aihirebox_company_list.csv --company-ids cid_new --merge output_production/company_tagging --model openai/gpt-5-mini:online --quiet --no-reasoning
-python run_embedding.py data/aihirebox_company_list.csv --company-ids cid_new --merge output_production/company_embedding
-python run_recommender.py --company-id cid_new
-```
-
----
-
 # Company Recommendation Details
+
+## Simple Recall Recommender (`simple_recommender.py`)
+
+简化版的公司召回模块，基于 5 个规则召回候选公司，用于后续 LLM 精排生成行业报告文章。
+
+### 设计目标
+
+- **简单可控**：5 个明确的召回规则，每个规则召回 Top 20 候选
+- **轻量级头部抑制**：只用 `CompanyStageHeadSuppression`（50% 降权），不用 `IDFHeadSuppression`
+- **输出原始数据**：给 LLM 精排的数据包含 `company_name`, `location`, `company_details`，避免 tags 耦合
+
+### 5 个召回规则
+
+| 规则ID | 规则名称 | 匹配条件 | 故事角度 |
+|--------|----------|----------|----------|
+| R1_industry | 核心行业 | `industry` 有交集 | "同为XX行业的公司" |
+| R2_tech_focus | 技术路线 | `tech_focus` 有交集 | "同为XX技术方向的公司" |
+| R3_industry_market | 行业+市场 | `industry` + `target_market` 都有交集 | "同为出海/国内XX行业" |
+| R4_team_background | 团队画像 | `team_background` 有交集 | "同为大厂系/学术派" |
+| R5_industry_team | 行业+团队 | `industry` + `team_background` 都有交集 | "同行业且团队背景相似" |
+
+### 评分公式
+
+```python
+tag_score = |query_tags ∩ candidate_tags| / |query_tags ∪ candidate_tags|  # Jaccard
+embedding_score = cosine_similarity(query_emb, candidate_emb)
+final_score = 0.6 * tag_score + 0.4 * embedding_score
+
+# 头部抑制（只对 public/bigtech_subsidiary/profitable/pre_ipo 降权 50%）
+if company.company_stage in HEAD_COMPANY_STAGES:
+    final_score = final_score * 0.5
+```
+
+### 使用方法
+
+```bash
+# 基本用法
+python run_simple_recommender.py --company-id cid_100 --print-only
+python run_simple_recommender.py --all --output-dir output_production/simple_recall
+
+# 自定义参数（--top-k, --no-head-suppression）
+python run_simple_recommender.py --company-id cid_100 --top-k 30
+```
+
+### 输出格式
+
+```json
+{
+  "query_company": {
+    "company_id": "cid_100",
+    "company_name": "MiniMax",
+    "location": "蓟门壹号",
+    "company_details": "MiniMax是一家专注于通用大模型研发的AI公司..."
+  },
+  "recall_groups": [
+    {
+      "rule_id": "R1_industry",
+      "rule_name": "同行业公司",
+      "rule_story": "同为AI大模型、企业服务领域的公司",
+      "matched_tags": {"industry": ["ai_llm", "enterprise_saas"]},
+      "candidates": [
+        {
+          "company_id": "cid_114",
+          "company_name": "月之暗面",
+          "location": "北京市海淀区...",
+          "company_details": "月之暗面是一家...",
+          "final_score": 0.92,
+          "tag_score": 0.85,
+          "embedding_score": 0.78,
+          "head_penalty_applied": false
+        }
+      ]
+    }
+  ]
+}
+```
+
+### 关键参数
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `top_k` | 20 | 每个规则召回的候选数量 |
+| `head_suppression` | True | 是否启用头部抑制 |
+| `head_penalty` | 0.5 | 头部公司降权比例 |
+
+### Python API
+
+```python
+from simple_recommender import (
+    SimpleRecallRecommender,
+    load_data_for_recommender,
+    print_recall_result,
+)
+
+# 加载数据
+profiles, raw_companies, embeddings, mapping = load_data_for_recommender(
+    raw_csv_path=Path("data/aihirebox_company_list.csv"),
+    tags_json_path=Path("output_production/company_tagging/company_tags.json"),
+    embeddings_dir=Path("output_production/company_embedding"),
+)
+
+# 初始化推荐器
+recommender = SimpleRecallRecommender(
+    profiles=profiles,
+    raw_companies=raw_companies,
+    embeddings=embeddings,
+    embedding_mapping=mapping,
+    head_suppression=True,
+    head_penalty=0.5,
+)
+
+# 执行召回
+result = recommender.recall("cid_100", top_k=20)
+
+# 打印结果
+print_recall_result(result)
+```
+
+---
 
 ## Multi-Dimensional Company Recommender (`company_recommender.py`)
 
@@ -673,47 +814,19 @@ final_score = (1 - weight) × tag_score + weight × embedding_score
 ### 使用方法
 
 ```bash
-# 为单个公司生成推荐
+# 基本用法（单公司/多公司/全部）
 python run_recommender.py --company-id cid_100
+python run_recommender.py --company-ids cid_100 cid_109
+python run_recommender.py --all --score-threshold 0.6
 
-# 为多个公司生成推荐
-python run_recommender.py --company-ids cid_100 cid_109 cid_114
-
-# 批量为所有公司生成推荐
-python run_recommender.py --all
-
-# 自定义参数
-python run_recommender.py --company-id cid_100 \
-    --num-dimensions 5 \
-    --max-per-dim 5 \
-    --head-penalty 0.7
-
-# 高质量推荐（设置分数阈值）
+# 常用参数
 python run_recommender.py --company-id cid_100 \
     --score-threshold 0.7 \
-    --max-below-threshold 2
+    --head-penalty 0.7 \
+    --num-dimensions 5
 
-# 指定 embeddings 目录
-python run_recommender.py --company-id cid_100 \
-    --embeddings-dir output/company_embeddings_full
-
-# 关闭 embedding 加成（仅用 tag 相似度）
-python run_recommender.py --company-id cid_100 --no-embedding-boost
-
-# 关闭语义维度（仅用标签）
-python run_recommender.py --company-id cid_100 --no-semantic
-
-# 允许公司出现在多个维度
-python run_recommender.py --company-id cid_100 --no-diversity
-
-# 仅打印结果，不保存文件
+# 高级选项（--no-embedding-boost, --no-semantic, --no-diversity, --print-only）
 python run_recommender.py --company-id cid_100 --print-only
-
-# 完整生产用命令
-python run_recommender.py --all \
-    --score-threshold 0.6 \
-    --embeddings-dir output/company_embeddings_full \
-    --output-dir output/recs_production
 ```
 
 ### 输出示例
@@ -849,130 +962,6 @@ print_recommendations(recs)
 
 ---
 
-## Simple Recall Recommender (`simple_recommender.py`)
-
-简化版的公司召回模块，基于 5 个规则召回候选公司，用于后续 LLM 精排生成行业报告文章。
-
-### 设计目标
-
-- **简单可控**：5 个明确的召回规则，每个规则召回 Top 20 候选
-- **轻量级头部抑制**：只用 `CompanyStageHeadSuppression`（50% 降权），不用 `IDFHeadSuppression`
-- **输出原始数据**：给 LLM 精排的数据包含 `company_name`, `location`, `company_details`，避免 tags 耦合
-
-### 5 个召回规则
-
-| 规则ID | 规则名称 | 匹配条件 | 故事角度 |
-|--------|----------|----------|----------|
-| R1_industry | 核心行业 | `industry` 有交集 | "同为XX行业的公司" |
-| R2_tech_focus | 技术路线 | `tech_focus` 有交集 | "同为XX技术方向的公司" |
-| R3_industry_market | 行业+市场 | `industry` + `target_market` 都有交集 | "同为出海/国内XX行业" |
-| R4_team_background | 团队画像 | `team_background` 有交集 | "同为大厂系/学术派" |
-| R5_industry_team | 行业+团队 | `industry` + `team_background` 都有交集 | "同行业且团队背景相似" |
-
-### 评分公式
-
-```python
-tag_score = |query_tags ∩ candidate_tags| / |query_tags ∪ candidate_tags|  # Jaccard
-embedding_score = cosine_similarity(query_emb, candidate_emb)
-final_score = 0.6 * tag_score + 0.4 * embedding_score
-
-# 头部抑制（只对 public/bigtech_subsidiary/profitable/pre_ipo 降权 50%）
-if company.company_stage in HEAD_COMPANY_STAGES:
-    final_score = final_score * 0.5
-```
-
-### 使用方法
-
-```bash
-# 单公司召回（打印结果）
-python run_simple_recommender.py --company-id cid_100 --print-only
-
-# 批量召回所有公司
-python run_simple_recommender.py --all --output-dir output_production/simple_recall
-
-# 禁用头部抑制
-python run_simple_recommender.py --company-id cid_100 --no-head-suppression
-
-# 指定召回数量
-python run_simple_recommender.py --company-id cid_100 --top-k 30
-```
-
-### 输出格式
-
-```json
-{
-  "query_company": {
-    "company_id": "cid_100",
-    "company_name": "MiniMax",
-    "location": "蓟门壹号",
-    "company_details": "MiniMax是一家专注于通用大模型研发的AI公司..."
-  },
-  "recall_groups": [
-    {
-      "rule_id": "R1_industry",
-      "rule_name": "同行业公司",
-      "rule_story": "同为AI大模型、企业服务领域的公司",
-      "matched_tags": {"industry": ["ai_llm", "enterprise_saas"]},
-      "candidates": [
-        {
-          "company_id": "cid_114",
-          "company_name": "月之暗面",
-          "location": "北京市海淀区...",
-          "company_details": "月之暗面是一家...",
-          "final_score": 0.92,
-          "tag_score": 0.85,
-          "embedding_score": 0.78,
-          "head_penalty_applied": false
-        }
-      ]
-    }
-  ]
-}
-```
-
-### 关键参数
-
-| 参数 | 默认值 | 说明 |
-|------|--------|------|
-| `top_k` | 20 | 每个规则召回的候选数量 |
-| `head_suppression` | True | 是否启用头部抑制 |
-| `head_penalty` | 0.5 | 头部公司降权比例 |
-
-### Python API
-
-```python
-from simple_recommender import (
-    SimpleRecallRecommender,
-    load_data_for_recommender,
-    print_recall_result,
-)
-
-# 加载数据
-profiles, raw_companies, embeddings, mapping = load_data_for_recommender(
-    raw_csv_path=Path("data/aihirebox_company_list.csv"),
-    tags_json_path=Path("output_production/company_tagging/company_tags.json"),
-    embeddings_dir=Path("output_production/company_embedding"),
-)
-
-# 初始化推荐器
-recommender = SimpleRecallRecommender(
-    profiles=profiles,
-    raw_companies=raw_companies,
-    embeddings=embeddings,
-    embedding_mapping=mapping,
-    head_suppression=True,
-    head_penalty=0.5,
-)
-
-# 执行召回
-result = recommender.recall("cid_100", top_k=20)
-
-# 打印结果
-print_recall_result(result)
-```
-
----
-
 # LLM 精排与文章生成系统 (`article_generator/`)
 
 基于召回结果生成多风格行业分析文章的三层架构系统。
@@ -1039,24 +1028,11 @@ flowchart TB
 ### 使用方法
 
 ```bash
-# 搜索所有公司
+# 搜索所有公司（支持 --company-ids 或 --company-ids-json）
 python run_web_search_cache.py \
     --company-csv data/aihirebox_company_list.csv \
     --output-dir output_production/article_generator/web_search_cache \
-    --max-results 10 \
     --skip-existing
-
-# 搜索指定公司
-python run_web_search_cache.py \
-    --company-csv data/aihirebox_company_list.csv \
-    --company-ids cid_100 cid_101 \
-    --output-dir output_production/article_generator/web_search_cache
-    
-# 从 JSON 文件读取公司列表
-python run_web_search_cache.py \
-    --company-csv data/aihirebox_company_list.csv \
-    --company-ids-json data/target_companies.json \
-    --output-dir output_production/article_generator/web_search_cache
 ```
 
 ### 输出格式
@@ -1087,24 +1063,11 @@ python run_web_search_cache.py \
 ### 使用方法
 
 ```bash
-# 精排所有召回结果
+# 基本用法（支持 --company-ids 指定公司，--web-cache-dir 增强精排）
 python run_reranker.py \
     --recall-results output_production/simple_recall/recall_results.json \
     --output-dir output_production/article_generator/rerank_cache \
-    --top-k 5 \
     --skip-existing
-
-# 精排指定公司
-python run_reranker.py \
-    --recall-results output_production/simple_recall/recall_results.json \
-    --company-ids cid_100 cid_101 \
-    --output-dir output_production/article_generator/rerank_cache
-    
-# 使用 web search 缓存增强精排
-python run_reranker.py \
-    --recall-results output_production/simple_recall/recall_results.json \
-    --web-cache-dir output_production/article_generator/web_search_cache \
-    --output-dir output_production/article_generator/rerank_cache
 ```
 
 ### 输出格式
@@ -1133,7 +1096,31 @@ python run_reranker.py \
 
 ## Layer 2: Article Writer (`run_article_writer.py`)
 
-使用 Gemini 生成多风格文章。
+使用 Gemini 生成多风格文章，**支持并行调用 OpenRouter API** 大幅提升生成速度。
+
+### 并行处理
+
+脚本默认使用 5 个并行 worker 调用 OpenRouter API。付费 key 无请求频率限制（`requests = -1`），可放心使用高并发。
+
+```bash
+# 默认 5 并发
+python run_article_writer.py --rerank-dir ... --output-dir ...
+
+# 高并发模式（10 并发）
+python run_article_writer.py --concurrency 10 --rerank-dir ... --output-dir ...
+
+# 串行模式（兼容旧版，调试用）
+python run_article_writer.py --concurrency 1 --rerank-dir ... --output-dir ...
+```
+
+**性能对比**（132 公司 × 2 风格 = 264 篇文章）：
+| 模式 | 并发数 | 预估时间 |
+|------|--------|----------|
+| 串行 | 1 | ~22 分钟（5s/篇） |
+| 默认 | 5 | ~5 分钟 |
+| 高并发 | 10 | ~3 分钟 |
+
+> **注意**：如遇到 429 错误，通常来自上游模型 provider（如 Google/OpenAI），可适当降低并发数。
 
 ### 5 种文章风格
 
@@ -1150,24 +1137,19 @@ python run_reranker.py \
 ### 使用方法
 
 ```bash
-# 生成所有风格的文章
+# 基本用法（默认 5 并发，支持 --company-ids 指定公司，--styles 指定风格）
 python run_article_writer.py \
     --rerank-dir output_production/article_generator/rerank_cache \
     --web-cache-dir output_production/article_generator/web_search_cache \
     --output-dir output_production/article_generator/articles \
-    --styles 36kr huxiu xiaohongshu linkedin zhihu
+    --styles 36kr xiaohongshu
 
-# 只生成小红书风格
+# 高并发模式（10 并发，适合付费 key）
 python run_article_writer.py \
     --rerank-dir output_production/article_generator/rerank_cache \
+    --web-cache-dir output_production/article_generator/web_search_cache \
     --output-dir output_production/article_generator/articles \
-    --styles xiaohongshu
-
-# 生成指定公司的文章
-python run_article_writer.py \
-    --rerank-dir output_production/article_generator/rerank_cache \
-    --company-ids cid_100 \
-    --output-dir output_production/article_generator/articles \
+    --concurrency 10 \
     --styles 36kr xiaohongshu
 ```
 
@@ -1216,11 +1198,12 @@ python run_reranker.py \
     --output-dir output_production/article_generator/rerank_cache \
     --skip-existing
 
-# Step 3: 生成文章（默认 36kr + xiaohongshu 风格）
+# Step 3: 生成文章（默认 5 并发，36kr + xiaohongshu 风格）
 python run_article_writer.py \
     --rerank-dir output_production/article_generator/rerank_cache \
     --web-cache-dir output_production/article_generator/web_search_cache \
     --output-dir output_production/article_generator/articles \
+    --concurrency 10 \
     --styles 36kr xiaohongshu \
     --skip-existing
 ```
@@ -1363,6 +1346,9 @@ aihirebox-company-recsys/
 │       ├── web_search_cache/           # Web 搜索缓存
 │       ├── rerank_cache/               # 精排缓存
 │       └── articles/                   # 生成的文章
+│           ├── index.json              # 文章索引（按公司分组）
+│           ├── json/                   # JSON 格式
+│           └── markdown/               # Markdown 格式
 ├── .env.example                    # 环境变量示例
 ├── .gitignore
 ├── requirements.txt
@@ -1382,6 +1368,7 @@ aihirebox-company-recsys/
 7. **Embedding 加成**：tag 相似度与 embedding 语义相似度融合（默认 6:4 权重），提升推荐准确性
 8. **简化版召回**：`simple_recommender.py` 提供 5 规则粗排召回，轻量级头部抑制（50%），输出原始数据供 LLM 精排使用
 9. **三层文章生成**：Web Search (RAG) → LLM Reranker (精选 Top 5) → Article Writer (多风格生成)
+10. **并行文章生成**：`run_article_writer.py` 默认使用 5 并发调用 OpenRouter API，付费 key 无频率限制，可设置 `--concurrency 10` 高并发加速
 
 ## Notes
 
