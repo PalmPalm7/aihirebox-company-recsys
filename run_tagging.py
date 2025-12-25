@@ -6,6 +6,11 @@ This script processes company data from a CSV file and extracts structured tags
 using LLM models. Supports web search enhancement via OpenRouter's :online suffix
 for better team_background accuracy. Also supports incremental updates via --merge.
 
+Features:
+- **Checkpoint/Resume**: Saves progress every N companies to prevent data loss
+- **Merge Mode**: Incremental updates that merge with existing tags
+- **Web Search**: Better team_background accuracy with :online models
+
 Usage:
     # Basic usage with default model (openai/gpt-5-mini:online)
     python run_tagging.py data/aihirebox_company_list_sample.csv
@@ -14,7 +19,13 @@ Usage:
     python run_tagging.py data/aihirebox_company_list_sample.csv --model openai/gpt-5-mini
 
     # Incremental mode - merge new tags with existing ones
-    python run_tagging.py data/aihirebox_company_list.csv --merge output_production/
+    python run_tagging.py data/aihirebox_company_list.csv --merge output_production/company_tagging
+
+    # Resume from interruption (auto-enabled when output dir has existing data)
+    python run_tagging.py data/aihirebox_company_list.csv --resume
+
+    # Custom checkpoint interval (save every 5 companies)
+    python run_tagging.py data/aihirebox_company_list.csv --checkpoint-interval 5
 
     # Process specific companies and merge with existing
     python run_tagging.py data/aihirebox_company_list.csv --company-ids cid_new_1 cid_new_2 --merge output_production/
@@ -32,7 +43,7 @@ import sys
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Set
 
 from company_tagging import (
     CompanyTagger,
@@ -51,6 +62,9 @@ from company_tagging import (
 # Default model with web search enabled for better team_background
 DEFAULT_MODEL = "openai/gpt-5-mini:online"
 
+# Default checkpoint interval (save every N companies)
+DEFAULT_CHECKPOINT_INTERVAL = 10
+
 # Available models
 AVAILABLE_MODELS = [
     "openai/gpt-oss-120b",
@@ -62,6 +76,67 @@ AVAILABLE_MODELS = [
     "google/gemini-2.5-flash",
     "google/gemini-2.5-flash:online",
 ]
+
+
+class CheckpointManager:
+    """Manages incremental saving of tagging results to prevent data loss."""
+    
+    def __init__(
+        self,
+        output_dir: Path,
+        existing_tags: List[CompanyTags],
+        checkpoint_interval: int = DEFAULT_CHECKPOINT_INTERVAL,
+        quiet: bool = False,
+    ):
+        self.output_dir = output_dir
+        self.checkpoint_interval = checkpoint_interval
+        self.quiet = quiet
+        
+        # Initialize with existing tags (for merge mode)
+        self.all_results: Dict[str, CompanyTags] = {t.company_id: t for t in existing_tags}
+        self.new_results: List[CompanyTags] = []
+        self.processed_count = 0
+        self.last_checkpoint_count = 0
+    
+    def on_result(self, result: CompanyTags, index: int, _total: int) -> None:
+        """Callback for each processed company. Triggers checkpoint if needed."""
+        self.new_results.append(result)
+        self.all_results[result.company_id] = result
+        self.processed_count = index + 1
+        
+        # Check if we should save a checkpoint
+        if self.processed_count - self.last_checkpoint_count >= self.checkpoint_interval:
+            self._save_checkpoint()
+            self.last_checkpoint_count = self.processed_count
+    
+    def _save_checkpoint(self) -> None:
+        """Save current progress to disk."""
+        results_list = list(self.all_results.values())
+        results_list.sort(key=lambda x: x.company_id)
+        
+        # Save both CSV and JSON
+        csv_path = self.output_dir / "company_tags.csv"
+        json_path = self.output_dir / "company_tags.json"
+        
+        save_results_csv(results_list, csv_path)
+        save_results_json(results_list, json_path)
+        
+        if not self.quiet:
+            print(f"  💾 Checkpoint saved: {self.processed_count} companies processed ({len(results_list)} total)")
+    
+    def finalize(self) -> List[CompanyTags]:
+        """Save final results and return all tags."""
+        # Final save (in case we didn't hit the last checkpoint)
+        if self.processed_count > self.last_checkpoint_count:
+            self._save_checkpoint()
+        
+        results_list = list(self.all_results.values())
+        results_list.sort(key=lambda x: x.company_id)
+        return results_list
+    
+    def get_new_results(self) -> List[CompanyTags]:
+        """Get only the newly processed results (for summary)."""
+        return self.new_results
 
 
 def load_existing_tags(tags_dir: Path) -> tuple[List[CompanyTags], Set[str]]:
@@ -167,6 +242,12 @@ Examples:
   
   # Process companies from JSON file (supports {{"company_ids": [...]}} or [...])
   python run_tagging.py data/aihirebox_company_list_sample.csv --company-ids-json my_companies.json
+  
+  # Resume from interruption (continues from last checkpoint)
+  python run_tagging.py data/aihirebox_company_list.csv --resume
+  
+  # Custom checkpoint interval (save every 5 companies)
+  python run_tagging.py data/aihirebox_company_list.csv --checkpoint-interval 5
 
 Available models:
 {chr(10).join(f'  - {m}' for m in AVAILABLE_MODELS)}
@@ -239,6 +320,17 @@ Note: Models with ':online' suffix enable real-time web search for better team_b
         metavar="EXISTING_DIR",
         help="Merge with existing tags from specified directory (incremental mode)",
     )
+    parser.add_argument(
+        "--checkpoint-interval",
+        type=int,
+        default=DEFAULT_CHECKPOINT_INTERVAL,
+        help=f"Save progress every N companies (default: {DEFAULT_CHECKPOINT_INTERVAL})",
+    )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Resume from last checkpoint (skips already processed companies in output dir)",
+    )
     return parser.parse_args()
 
 
@@ -291,6 +383,17 @@ def main() -> None:
         print("No companies to process!")
         sys.exit(1)
     
+    # Setup output directory first (needed for resume check)
+    if args.output_dir is None:
+        if args.merge:
+            # Default to same directory when merging
+            args.output_dir = args.merge
+        else:
+            # Default to output_production/company_tagging for unified structure
+            args.output_dir = Path("output_production/company_tagging")
+    
+    args.output_dir.mkdir(parents=True, exist_ok=True)
+    
     # Handle merge mode - load existing tags
     existing_tags = []
     existing_ids: Set[str] = set()
@@ -304,6 +407,9 @@ def main() -> None:
             existing_tags, existing_ids = load_existing_tags(args.merge)
             if not args.quiet:
                 print(f"Loaded {len(existing_ids)} existing tags from {args.merge}")
+        except FileNotFoundError:
+            if not args.quiet:
+                print(f"No existing tags found in {args.merge}, starting fresh")
         except Exception as e:
             print(f"Error loading existing tags: {e}")
             sys.exit(1)
@@ -315,22 +421,32 @@ def main() -> None:
             skipped = original_count - len(companies)
             if not args.quiet and skipped > 0:
                 print(f"Skipping {skipped} companies with existing tags")
-        
-        if not companies:
+    
+    # Handle resume mode - load from output directory
+    if args.resume and not args.merge:
+        try:
+            existing_tags, existing_ids = load_existing_tags(args.output_dir)
             if not args.quiet:
-                print("All companies already have tags. Nothing to do.")
-            sys.exit(0)
+                print(f"🔄 Resuming: Found {len(existing_ids)} already processed companies")
+            
+            # Filter out already processed companies
+            original_count = len(companies)
+            companies = [c for c in companies if c.company_id not in existing_ids]
+            skipped = original_count - len(companies)
+            if not args.quiet and skipped > 0:
+                print(f"Skipping {skipped} already processed companies")
+        except FileNotFoundError:
+            if not args.quiet:
+                print("No checkpoint found, starting fresh")
+        except Exception as e:
+            if not args.quiet:
+                print(f"Warning: Could not load checkpoint: {e}, starting fresh")
     
-    # Setup output directory
-    if args.output_dir is None:
-        if args.merge:
-            # Default to same directory when merging
-            args.output_dir = args.merge
-        else:
-            # Default to output_production/company_tagging for unified structure
-            args.output_dir = Path("output_production/company_tagging")
-    
-    args.output_dir.mkdir(parents=True, exist_ok=True)
+    if not companies:
+        if not args.quiet:
+            print("All companies already processed. Nothing to do.")
+            print(f"✅ Results available at: {args.output_dir}")
+        sys.exit(0)
     
     # Initialize tagger
     is_online = ":online" in args.model
@@ -338,6 +454,7 @@ def main() -> None:
         print(f"\nModel: {args.model}")
         print(f"Web search: {'✓ Enabled' if is_online else '✗ Disabled'}")
         print(f"Reasoning: {'✗ Disabled' if args.no_reasoning else '✓ Enabled'}")
+        print(f"Checkpoint: Every {args.checkpoint_interval} companies")
         print(f"Output: {args.output_dir}")
         print(f"Processing {len(companies)} companies...")
     
@@ -348,35 +465,49 @@ def main() -> None:
         include_reasoning=not args.no_reasoning,
     )
     
-    # Process companies
-    start_time = time.time()
-    new_results = tagger.tag_companies(
-        companies, 
-        show_progress=not args.quiet,
-        delay_seconds=args.delay,
+    # Initialize checkpoint manager
+    checkpoint_mgr = CheckpointManager(
+        output_dir=args.output_dir,
+        existing_tags=existing_tags,
+        checkpoint_interval=args.checkpoint_interval,
+        quiet=args.quiet,
     )
+    
+    # Process companies with incremental saving
+    start_time = time.time()
+    try:
+        tagger.tag_companies(
+            companies, 
+            show_progress=not args.quiet,
+            delay_seconds=args.delay,
+            on_result=checkpoint_mgr.on_result,
+        )
+    except KeyboardInterrupt:
+        if not args.quiet:
+            print("\n⚠️ Interrupted! Saving checkpoint...")
+        checkpoint_mgr.finalize()
+        if not args.quiet:
+            print("✅ Progress saved. Run with --resume to continue.")
+        sys.exit(130)  # Standard exit code for Ctrl+C
+    except Exception as e:
+        if not args.quiet:
+            print(f"\n❌ Error: {e}")
+            print("Saving checkpoint...")
+        checkpoint_mgr.finalize()
+        if not args.quiet:
+            print("✅ Progress saved. Run with --resume to continue.")
+        raise
+    
     duration = time.time() - start_time
     
-    # Merge with existing results if in merge mode
-    results = new_results
-    if args.merge and existing_tags:
-        results = merge_tags(existing_tags, new_results)
-        if not args.quiet:
+    # Finalize and get results
+    results = checkpoint_mgr.finalize()
+    new_results = checkpoint_mgr.get_new_results()
+    
+    if not args.quiet:
+        if existing_tags:
             print(f"Merged {len(new_results)} new tags with {len(existing_tags)} existing")
             print(f"Total tags: {len(results)}")
-    
-    # Save results
-    if args.output_format in ("csv", "both"):
-        csv_path = args.output_dir / "company_tags.csv"
-        save_results_csv(results, csv_path)
-        if not args.quiet:
-            print(f"Saved CSV: {csv_path}")
-    
-    if args.output_format in ("json", "both"):
-        json_path = args.output_dir / "company_tags.json"
-        save_results_json(results, json_path)
-        if not args.quiet:
-            print(f"Saved JSON: {json_path}")
     
     if args.save_taxonomy:
         taxonomy_path = args.output_dir / "tag_taxonomy.json"

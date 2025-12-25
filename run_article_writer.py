@@ -1,17 +1,27 @@
 #!/usr/bin/env python3
 """
-Article Writer CLI - 批量生成文章
+Article Writer CLI - 批量生成文章（支持并行）
 
 使用 google/gemini-3-flash-preview via OpenRouter 生成文章。
 读取 rerank_cache 和 web_search_cache，按指定风格生成文章。
 
+支持并行调用 OpenRouter API，大幅提升生成速度。
+付费 key 无请求频率限制（requests = -1），可放心使用高并发。
+
 Usage:
-    # 生成所有风格的文章
+    # 生成所有风格的文章（默认 5 并发）
     python run_article_writer.py \\
         --rerank-dir output_production/article_generator/rerank_cache \\
         --web-cache-dir output_production/article_generator/web_search_cache \\
         --output-dir output_production/article_generator/articles \\
         --styles 36kr huxiu xiaohongshu linkedin zhihu
+
+    # 高并发模式（10 并发）
+    python run_article_writer.py \\
+        --rerank-dir output_production/article_generator/rerank_cache \\
+        --output-dir output_production/article_generator/articles \\
+        --concurrency 10 \\
+        --styles 36kr xiaohongshu
 
     # 只生成小红书风格
     python run_article_writer.py \\
@@ -24,6 +34,13 @@ Usage:
         --rerank-dir output_production/article_generator/rerank_cache \\
         --company-ids cid_100 \\
         --output-dir output_production/article_generator/articles \\
+        --styles 36kr
+
+    # 串行模式（兼容旧版，不推荐）
+    python run_article_writer.py \\
+        --rerank-dir output_production/article_generator/rerank_cache \\
+        --output-dir output_production/article_generator/articles \\
+        --concurrency 1 \\
         --styles 36kr
 """
 
@@ -148,10 +165,10 @@ def parse_args() -> argparse.Namespace:
         help="Article styles to generate (default: 36kr xiaohongshu)",
     )
     parser.add_argument(
-        "--delay",
-        type=float,
-        default=0.5,
-        help="Delay between requests in seconds (default: 0.5)",
+        "--concurrency",
+        type=int,
+        default=5,
+        help="Number of parallel workers (default: 5, use 1 for sequential mode)",
     )
     parser.add_argument(
         "--skip-existing",
@@ -250,15 +267,16 @@ def main():
     print(f"\nModel: {args.model}")
     print(f"Output: {args.output_dir}")
     print(f"Skip existing: {args.skip_existing}")
+    print(f"Concurrency: {args.concurrency} workers")
     print(f"\nGenerating {total_tasks} articles...")
     
-    # 批量生成文章
-    articles = writer.batch_write(
+    # 批量生成文章（并行模式）
+    articles = writer.batch_write_parallel(
         rerank_results=rerank_results,
         style_ids=args.styles,
         web_search_cache=web_search_cache,
         company_details_map=company_details_map,
-        delay_seconds=args.delay,
+        max_workers=args.concurrency,
         skip_existing=args.skip_existing,
         output_dir=args.output_dir,
         show_progress=not args.quiet,
@@ -283,23 +301,67 @@ def main():
     for style, count in sorted(style_stats.items()):
         print(f"  {style}: {count}")
     print(f"\nOutput directory: {args.output_dir}")
+    print(f"  - JSON files: {args.output_dir}/json/")
+    print(f"  - Markdown files: {args.output_dir}/markdown/")
     
-    # 保存运行元数据
-    metadata = {
+    # 构建详细的 index，按公司分组
+    companies_index: Dict[str, Dict] = {}
+    for a in articles:
+        cid = a.query_company_id
+        if cid not in companies_index:
+            companies_index[cid] = {
+                "company_name": a.query_company_name,
+                "articles": [],
+            }
+        
+        base_filename = f"{a.query_company_id}_{a.rule_id}_{a.style}"
+        
+        # 添加 JSON 版本
+        companies_index[cid]["articles"].append({
+            "rule_id": a.rule_id,
+            "style": a.style,
+            "format": "json",
+            "filename": f"{base_filename}.json",
+            "title": a.title,
+            "word_count": a.word_count,
+            "generated_at": a.generated_at,
+        })
+        
+        # 添加 Markdown 版本
+        companies_index[cid]["articles"].append({
+            "rule_id": a.rule_id,
+            "style": a.style,
+            "format": "md",
+            "filename": f"{base_filename}.md",
+            "title": a.title,
+            "word_count": a.word_count,
+            "generated_at": a.generated_at,
+        })
+    
+    # 保存详细的 index
+    index = {
         "run_at": datetime.now().isoformat(),
         "model": args.model,
-        "styles": args.styles,
-        "total_articles": len(articles),
-        "successful": success_count,
-        "failed": failed_count,
-        "style_breakdown": style_stats,
+        "stats": {
+            "total_articles": len(articles),
+            "successful": success_count,
+            "failed": failed_count,
+            "styles": list(style_stats.keys()),
+            "style_breakdown": style_stats,
+            "companies_count": len(companies_index),
+        },
+        "output_dirs": {
+            "json": "json/",
+            "markdown": "markdown/",
+        },
+        "companies": companies_index,
     }
     
-    metadata_file = args.output_dir / "run_metadata.json"
-    with open(metadata_file, "w", encoding="utf-8") as f:
-        json.dump(metadata, f, ensure_ascii=False, indent=2)
+    index_file = args.output_dir / "index.json"
+    with open(index_file, "w", encoding="utf-8") as f:
+        json.dump(index, f, ensure_ascii=False, indent=2)
     
-    print(f"Metadata saved: {metadata_file}")
+    print(f"\nIndex saved: {index_file}")
     
     return 0
 
