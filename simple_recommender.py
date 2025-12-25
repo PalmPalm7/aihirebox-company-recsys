@@ -49,13 +49,13 @@ RECALL_RULES = [
         "dimensions": ["industry"],
         "story_template": "同为{tags}领域的公司",
     },
-    # {
-    #     "rule_id": "R2_tech_focus",
-    #     "name": "同技术方向",
-    #     "name_en": "Same Tech Focus",
-    #     "dimensions": ["tech_focus"],
-    #     "story_template": "同为{tags}技术方向的公司",
-    # },
+    {
+        "rule_id": "R2_tech_focus",
+        "name": "同技术方向",
+        "name_en": "Same Tech Focus",
+        "dimensions": ["tech_focus"],
+        "story_template": "同为{tags}技术方向的公司",
+    },
     {
         "rule_id": "R3_industry_market",
         "name": "同行业同市场",
@@ -70,13 +70,13 @@ RECALL_RULES = [
         "dimensions": ["team_background"],
         "story_template": "同为{tags}背景的创业公司",
     },
-    # {
-    #     "rule_id": "R5_industry_team",
-    #     "name": "同行业同背景",
-    #     "name_en": "Same Industry & Team",
-    #     "dimensions": ["industry", "team_background"],
-    #     "story_template": "同为{industry}领域的{team_background}创业公司",
-    # },
+    {
+        "rule_id": "R5_industry_team",
+        "name": "同行业同背景",
+        "name_en": "Same Industry & Team",
+        "dimensions": ["industry", "team_background"],
+        "story_template": "同为{industry}领域的{team_background}创业公司",
+    },
 ]
 
 
