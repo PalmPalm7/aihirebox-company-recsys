@@ -1,5 +1,7 @@
 # AIHireBox Company Side Agentic Recsys
 
+> [English Version](./README_EN.md)
+
 该项目构造AI职小盒旗下智能体公司咨询推荐模块，部分代码和文档由Claude Code/Codex等copilot agent修正、生成。
 
 核心模块为这三点
