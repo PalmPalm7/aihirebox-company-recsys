@@ -559,6 +559,183 @@ class CompanyRecommender:
         
         return similarities[:max_companies]
     
+    def _prioritize_dimensions(
+        self,
+        query_company: CompanyProfile,
+        min_companies_per_dim: int,
+    ) -> List[Tuple[str, str, int, List[str]]]:
+        """Prioritize dimensions based on query company's tags.
+
+        Args:
+            query_company: Query company profile
+            min_companies_per_dim: Minimum companies required per dimension
+
+        Returns:
+            List of (dimension, primary_tag, count, all_tags) sorted by priority
+        """
+        dimension_scores: List[Tuple[str, str, int, List[str]]] = []
+
+        for dimension in TAG_DIMENSIONS:
+            tags = self._get_company_tags(query_company, dimension)
+            if tags:
+                for tag in tags:
+                    # Skip "unknown" and "other" tags
+                    if tag in {"unknown", "other", "not_tech_focused"}:
+                        continue
+
+                    # Count how many companies share this tag
+                    count = len(self.tag_index[dimension].get(tag, set())) - 1  # -1 for query
+                    if count >= min_companies_per_dim:
+                        dimension_scores.append((dimension, tag, count, tags))
+
+        # Sort by count (prefer dimensions with more candidates, but not too many)
+        # Sweet spot: enough candidates but not too generic
+        dimension_scores.sort(key=lambda x: -min(x[2], 50))
+
+        return dimension_scores
+
+    def _filter_candidates_by_threshold(
+        self,
+        candidates: List[Tuple[str, float, List[str], float, bool, float]],
+        score_threshold: float,
+        max_below_threshold: int,
+        max_companies_per_dim: int,
+    ) -> Optional[List[Tuple[str, float, List[str], float, bool, float]]]:
+        """Filter candidates by score threshold.
+
+        Args:
+            candidates: List of (company_id, score, shared_tags, tag_score, penalty_applied, emb_score)
+            score_threshold: Minimum score threshold
+            max_below_threshold: Max companies below threshold before rejecting dimension
+            max_companies_per_dim: Maximum companies to return
+
+        Returns:
+            Filtered candidates list, or None if dimension should be skipped
+        """
+        filtered_candidates = []
+        below_threshold_count = 0
+
+        for cid, score, shared_tags, tag_score, penalty_applied, emb_score in candidates:
+            if score >= score_threshold:
+                filtered_candidates.append((cid, score, shared_tags, tag_score, penalty_applied, emb_score))
+            else:
+                below_threshold_count += 1
+
+        # Skip this dimension if too many are below threshold
+        if below_threshold_count > max_below_threshold:
+            return None
+
+        # Limit to max companies
+        return filtered_candidates[:max_companies_per_dim]
+
+    def _create_tag_dimension_group(
+        self,
+        query_company: CompanyProfile,
+        dimension: str,
+        primary_tag: str,
+        filtered_candidates: List[Tuple[str, float, List[str], float, bool, float]],
+        diversity_constraint: bool,
+        used_company_ids: Set[str],
+    ) -> RecommendationGroup:
+        """Create a recommendation group for a tag-based dimension.
+
+        Args:
+            query_company: Query company profile
+            dimension: Dimension name
+            primary_tag: Primary tag for this dimension
+            filtered_candidates: Filtered candidate list
+            diversity_constraint: Whether to enforce diversity
+            used_company_ids: Set to track used company IDs (modified in-place)
+
+        Returns:
+            RecommendationGroup object
+        """
+        label_zh, label_en = self._get_dimension_label(dimension, primary_tag)
+
+        companies = []
+        shared_tags_for_group = set()
+
+        for cid, score, shared_tags, tag_score, penalty_applied, emb_score in filtered_candidates:
+            company = self.companies[cid]
+            companies.append(RecommendedCompany(
+                company_id=cid,
+                company_name=company.company_name,
+                similarity_score=round(score, 3),
+                raw_score=round(tag_score, 3),
+                head_penalty_applied=penalty_applied,
+                embedding_score=round(emb_score, 3) if emb_score > 0 else None,
+            ))
+            shared_tags_for_group.update(shared_tags)
+
+            if diversity_constraint:
+                used_company_ids.add(cid)
+
+        return RecommendationGroup(
+            dimension_key=f"{dimension}_{primary_tag}",
+            dimension_label_zh=label_zh,
+            dimension_label_en=label_en,
+            reason=f"这些公司与{query_company.company_name}在{label_zh}方面相似",
+            shared_tags=list(shared_tags_for_group),
+            companies=companies,
+        )
+
+    def _create_semantic_dimension_group(
+        self,
+        query_company: CompanyProfile,
+        semantic_candidates: List[Tuple[str, float, float, bool]],
+        score_threshold: float,
+        max_below_threshold: int,
+        min_companies_per_dim: int,
+        max_companies_per_dim: int,
+    ) -> Optional[RecommendationGroup]:
+        """Create a recommendation group for semantic similarity dimension.
+
+        Args:
+            query_company: Query company profile
+            semantic_candidates: List of (company_id, score, raw_score, penalty_applied)
+            score_threshold: Minimum score threshold
+            max_below_threshold: Max companies below threshold
+            min_companies_per_dim: Minimum companies required
+            max_companies_per_dim: Maximum companies to return
+
+        Returns:
+            RecommendationGroup object, or None if dimension should be skipped
+        """
+        filtered_semantic = []
+        below_threshold_count = 0
+
+        for cid, score, raw_score, penalty_applied in semantic_candidates:
+            if score >= score_threshold:
+                filtered_semantic.append((cid, score, raw_score, penalty_applied))
+            else:
+                below_threshold_count += 1
+
+        # Only add if not too many below threshold
+        if below_threshold_count > max_below_threshold or len(filtered_semantic) < min_companies_per_dim:
+            return None
+
+        filtered_semantic = filtered_semantic[:max_companies_per_dim]
+        companies = []
+        for cid, score, raw_score, penalty_applied in filtered_semantic:
+            company = self.companies[cid]
+            companies.append(RecommendedCompany(
+                company_id=cid,
+                company_name=company.company_name,
+                similarity_score=round(score, 3),
+                raw_score=round(raw_score, 3),
+                head_penalty_applied=penalty_applied,
+                embedding_score=round(raw_score, 3),
+            ))
+
+        return RecommendationGroup(
+            dimension_key="semantic_similar",
+            dimension_label_zh="业务描述相似",
+            dimension_label_en="Semantically Similar",
+            reason=f"这些公司的业务描述与{query_company.company_name}语义相似",
+            shared_tags=["semantic"],
+            companies=companies,
+        )
+
     def recommend(
         self,
         query_company_id: str,
@@ -572,7 +749,7 @@ class CompanyRecommender:
         use_embedding_boost: bool = True,
     ) -> CompanyRecommendations:
         """Generate multi-dimensional recommendations for a company.
-        
+
         Args:
             query_company_id: ID of the query company
             num_dimensions: Number of recommendation dimensions (3-5)
@@ -583,49 +760,32 @@ class CompanyRecommender:
             score_threshold: Minimum similarity score to include a company (default: 0.5)
             max_below_threshold: Max companies below threshold before dropping dimension (default: 2)
             use_embedding_boost: Boost tag-based scores with embedding similarity (default: True)
-            
+
         Returns:
             CompanyRecommendations object
         """
         query_company = self.companies.get(query_company_id)
         if not query_company:
             raise ValueError(f"Company not found: {query_company_id}")
-        
+
         recommendation_groups: List[RecommendationGroup] = []
         used_company_ids: Set[str] = set()  # For diversity constraint
-        
+
         # Prioritize dimensions based on query company's tags
-        dimension_scores: List[Tuple[str, str, int, List[str]]] = []
-        
-        for dimension in TAG_DIMENSIONS:
-            tags = self._get_company_tags(query_company, dimension)
-            if tags:
-                for tag in tags:
-                    # Skip "unknown" and "other" tags
-                    if tag in {"unknown", "other", "not_tech_focused"}:
-                        continue
-                    
-                    # Count how many companies share this tag
-                    count = len(self.tag_index[dimension].get(tag, set())) - 1  # -1 for query
-                    if count >= min_companies_per_dim:
-                        dimension_scores.append((dimension, tag, count, tags))
-        
-        # Sort by count (prefer dimensions with more candidates, but not too many)
-        # Sweet spot: enough candidates but not too generic
-        dimension_scores.sort(key=lambda x: -min(x[2], 50))
-        
+        dimension_scores = self._prioritize_dimensions(query_company, min_companies_per_dim)
+
         # Generate recommendations for top dimensions
         seen_dimension_tags: Set[Tuple[str, str]] = set()
-        
+
         for dimension, primary_tag, count, all_tags in dimension_scores:
             if len(recommendation_groups) >= num_dimensions:
                 break
-            
+
             # Skip if we already have this dimension-tag combo
             if (dimension, primary_tag) in seen_dimension_tags:
                 continue
             seen_dimension_tags.add((dimension, primary_tag))
-            
+
             # Find candidates with embedding boost
             exclude = used_company_ids if diversity_constraint else set()
             candidates = self._find_candidates_for_dimension(
@@ -633,104 +793,40 @@ class CompanyRecommender:
                 min_companies_per_dim, max_companies_per_dim * 2,  # Get more candidates for filtering
                 use_embedding_boost=use_embedding_boost,
             )
-            
+
             if len(candidates) < min_companies_per_dim:
                 continue
-            
+
             # Apply score threshold filtering
-            # Filter companies below threshold
-            filtered_candidates = []
-            below_threshold_count = 0
-            
-            for cid, score, shared_tags, tag_score, penalty_applied, emb_score in candidates:
-                if score >= score_threshold:
-                    filtered_candidates.append((cid, score, shared_tags, tag_score, penalty_applied, emb_score))
-                else:
-                    below_threshold_count += 1
-            
-            # Skip this dimension if too many are below threshold
-            if below_threshold_count > max_below_threshold:
+            filtered_candidates = self._filter_candidates_by_threshold(
+                candidates, score_threshold, max_below_threshold, max_companies_per_dim
+            )
+
+            if filtered_candidates is None or len(filtered_candidates) < min_companies_per_dim:
                 continue
-            
-            # Limit to max companies
-            filtered_candidates = filtered_candidates[:max_companies_per_dim]
-            
-            # Skip if not enough companies after filtering
-            if len(filtered_candidates) < min_companies_per_dim:
-                continue
-            
-            # Get label and reason
-            label_zh, label_en = self._get_dimension_label(dimension, primary_tag)
-            
+
             # Build recommendation group
-            companies = []
-            shared_tags_for_group = set()
-            
-            for cid, score, shared_tags, tag_score, penalty_applied, emb_score in filtered_candidates:
-                company = self.companies[cid]
-                companies.append(RecommendedCompany(
-                    company_id=cid,
-                    company_name=company.company_name,
-                    similarity_score=round(score, 3),
-                    raw_score=round(tag_score, 3),
-                    head_penalty_applied=penalty_applied,
-                    embedding_score=round(emb_score, 3) if emb_score > 0 else None,
-                ))
-                shared_tags_for_group.update(shared_tags)
-                
-                if diversity_constraint:
-                    used_company_ids.add(cid)
-            
-            recommendation_groups.append(RecommendationGroup(
-                dimension_key=f"{dimension}_{primary_tag}",
-                dimension_label_zh=label_zh,
-                dimension_label_en=label_en,
-                reason=f"这些公司与{query_company.company_name}在{label_zh}方面相似",
-                shared_tags=list(shared_tags_for_group),
-                companies=companies,
-            ))
-        
+            group = self._create_tag_dimension_group(
+                query_company, dimension, primary_tag, filtered_candidates,
+                diversity_constraint, used_company_ids
+            )
+            recommendation_groups.append(group)
+
         # Add semantic dimension if requested and we have embeddings
         if include_semantic and self.embeddings is not None and len(recommendation_groups) < num_dimensions:
             exclude = used_company_ids if diversity_constraint else set()
             semantic_candidates = self._find_semantic_candidates(
                 query_company, exclude, max_companies_per_dim * 2
             )
-            
-            # Apply threshold filtering for semantic dimension
-            filtered_semantic = []
-            below_threshold_count = 0
-            
-            for cid, score, raw_score, penalty_applied in semantic_candidates:
-                if score >= score_threshold:
-                    filtered_semantic.append((cid, score, raw_score, penalty_applied))
-                else:
-                    below_threshold_count += 1
-            
-            # Only add if not too many below threshold
-            if below_threshold_count <= max_below_threshold and len(filtered_semantic) >= min_companies_per_dim:
-                filtered_semantic = filtered_semantic[:max_companies_per_dim]
-                companies = []
-                for cid, score, raw_score, penalty_applied in filtered_semantic:
-                    company = self.companies[cid]
-                    companies.append(RecommendedCompany(
-                        company_id=cid,
-                        company_name=company.company_name,
-                        similarity_score=round(score, 3),
-                        raw_score=round(raw_score, 3),
-                        head_penalty_applied=penalty_applied,
-                        embedding_score=round(raw_score, 3),
-                    ))
-                
-                recommendation_groups.append(RecommendationGroup(
-                    dimension_key="semantic_similar",
-                    dimension_label_zh="业务描述相似",
-                    dimension_label_en="Semantically Similar",
-                    reason=f"这些公司的业务描述与{query_company.company_name}语义相似",
-                    shared_tags=["semantic"],
-                    companies=companies,
-                ))
-        
+
+            semantic_group = self._create_semantic_dimension_group(
+                query_company, semantic_candidates, score_threshold,
+                max_below_threshold, min_companies_per_dim, max_companies_per_dim
+            )
+
+            if semantic_group is not None:
+                recommendation_groups.append(semantic_group)
+
         # Build result
         return CompanyRecommendations(
             query_company_id=query_company_id,
