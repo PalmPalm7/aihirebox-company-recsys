@@ -163,6 +163,7 @@ if [ "$SHOW_HELP" = true ]; then
     echo "  4. Web Search Cache    - Company research"
     echo "  5. LLM Reranker        - Top 5 selection"
     echo "  6. Article Writer      - Multi-style articles"
+    echo "  7. Analytics           - Platform statistics"
     exit 0
 fi
 
@@ -375,6 +376,21 @@ else
     python run_article_writer.py "${ARTICLE_ARGS[@]}"
 
     print_success "Step 6 Complete: Articles saved to ${ARTICLES_OUTPUT}/"
+
+    # ==========================================================================
+    # Step 7: Generate Analytics
+    # ==========================================================================
+
+    print_header "Step 7: Generate Analytics"
+    print_step 7 "Computing platform analytics"
+    echo "Output: ${OUTPUT_BASE}/analytics.json"
+    echo ""
+
+    python scripts/generate_analytics.py \
+        --production-dir "${OUTPUT_BASE}" \
+        --pretty
+
+    print_success "Step 7 Complete: Analytics saved to ${OUTPUT_BASE}/analytics.json"
 fi
 
 # ==============================================================================
@@ -399,13 +415,13 @@ echo "  │   ├── recall_results.json"
 echo "  │   └── run_metadata.json"
 
 if [ "$SKIP_ARTICLES" = false ]; then
-    echo "  └── article_generator/"
-    echo "      ├── web_search_cache/"
-    echo "      ├── rerank_cache/"
-    echo "      └── articles/"
-    echo "          ├── index.json"
-    echo "          ├── json/"
-    echo "          └── markdown/"
+    echo "  ├── article_generator/"
+    echo "  │   ├── rerank_cache/"
+    echo "  │   └── articles/"
+    echo "  │       ├── index.json"
+    echo "  │       ├── json/"
+    echo "  │       └── markdown/"
+    echo "  └── analytics.json"
 fi
 
 echo ""

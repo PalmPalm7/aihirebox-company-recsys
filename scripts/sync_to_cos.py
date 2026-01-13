@@ -43,6 +43,8 @@ SYNC_MAPPINGS: List[Tuple[str, str, bool]] = [
     ("outputs/production/article_generator/articles/index.json", "articles/index.json", False),
     # Static data files
     ("data/aihirebox_company_list.csv", "articles/aihirebox_company_list.csv", False),
+    # Analytics
+    ("outputs/production/analytics.json", "analytics.json", False),
 ]
 
 # Scope definitions
@@ -50,6 +52,7 @@ SCOPES = {
     "all": None,  # All mappings
     "tagging": ["company_tagging/"],
     "articles": ["articles/"],
+    "analytics": ["analytics.json"],
 }
 
 
@@ -190,9 +193,9 @@ def parse_args() -> argparse.Namespace:
 
     parser.add_argument(
         "--scope",
-        choices=["all", "tagging", "articles"],
+        choices=["all", "tagging", "articles", "analytics"],
         default="all",
-        help="Sync scope: all, tagging, or articles (default: all)",
+        help="Sync scope: all, tagging, articles, or analytics (default: all)",
     )
     parser.add_argument(
         "--dry-run",
