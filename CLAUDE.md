@@ -130,3 +130,25 @@ cache/
 ```
 
 Production outputs (`outputs/production/`) contain: `company_tagging/`, `company_embedding/`, `simple_recall/`, `article_generator/`.
+
+### Manual Candidate Selection
+When a company fails to generate articles through the normal pipeline, use manual candidate selection:
+- Script: `scripts/create_manual_rerank.py`
+- Documentation: `docs/manual_candidate_selection.md`
+
+## Git Workflow
+
+**IMPORTANT**: Always create a new feature branch for commits. Never commit directly to `main` or `master`.
+
+```bash
+# Create a new branch for your changes
+git checkout -b feature/your-feature-name
+
+# After making changes, commit and push
+git add .
+git commit -m "Your commit message"
+git push -u origin feature/your-feature-name
+
+# Create a PR via GitHub CLI
+gh pr create --title "Your PR title" --body "Description"
+```
