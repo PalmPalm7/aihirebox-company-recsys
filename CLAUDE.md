@@ -31,6 +31,7 @@ cp .env.example .env
 ./run_full_pipeline.sh --model openai/gpt-oss-120b  # Custom model
 ./run_full_pipeline.sh --concurrency 30           # Adjust workers (default: 20)
 ./run_full_pipeline.sh --incremental              # Process new companies only
+./run_full_pipeline.sh --sync-cos                 # Sync outputs to COS after completion
 ```
 
 ### Individual Pipeline Stages
@@ -57,6 +58,19 @@ python run_article_writer.py --rerank-dir outputs/production/article_generator/r
 ### API Server
 ```bash
 uvicorn api.main:app --reload  # Development server on port 8000
+```
+
+### COS Sync (Tencent Cloud)
+```bash
+# Sync all outputs to COS
+python scripts/sync_to_cos.py
+
+# Dry run (show what would be synced)
+python scripts/sync_to_cos.py --dry-run
+
+# Sync specific scope
+python scripts/sync_to_cos.py --scope articles
+python scripts/sync_to_cos.py --scope tagging
 ```
 
 ### Docker
@@ -110,6 +124,10 @@ FastAPI REST server for serving generated articles with endpoints for health, me
 - `OPENROUTER_API_KEY` - Primary LLM API (required)
 - `OPENROUTER_FALLBACK_API_KEY` - Fallback key (optional)
 - `JINA_API_KEY` - Embeddings service (required)
+- `COS_BUCKET` - Tencent COS bucket name with APPID (for sync)
+- `COS_REGION` - COS region (e.g., ap-beijing)
+- `COS_SECRET_ID` - COS access key ID
+- `COS_SECRET_KEY` - COS secret access key
 
 ### Data Flow
 ```

@@ -52,6 +52,7 @@ INCREMENTAL=false
 SHOW_HELP=false
 CUSTOM_MODEL=""
 TEST_MODE=false
+SYNC_COS=false
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -65,6 +66,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --test)
             TEST_MODE=true
+            shift
+            ;;
+        --sync-cos)
+            SYNC_COS=true
             shift
             ;;
         --input)
@@ -138,6 +143,7 @@ if [ "$SHOW_HELP" = true ]; then
     echo "  --concurrency N    Set concurrency for parallel processing (default: 20)"
     echo "  --skip-articles    Skip article generation (steps 4-6)"
     echo "  --incremental      Only process new companies (merge mode)"
+    echo "  --sync-cos         Sync outputs to Tencent Cloud COS after completion"
     echo "  --test             Run in test mode (n10 sample, output_test/, incremental)"
     echo "  --help, -h         Show this help message"
     echo ""
@@ -193,6 +199,7 @@ echo "  Model:           ${CUSTOM_MODEL:-$DEFAULT_MODEL} (default)"
 echo "  Concurrency:     $DEFAULT_CONCURRENCY"
 echo "  Skip Articles:   $SKIP_ARTICLES"
 echo "  Incremental:     $INCREMENTAL"
+echo "  Sync to COS:     $SYNC_COS"
 echo ""
 
 # Check input file exists
@@ -402,4 +409,19 @@ if [ "$SKIP_ARTICLES" = false ]; then
 fi
 
 echo ""
+
+# ==============================================================================
+# Optional: Sync to COS
+# ==============================================================================
+
+if [ "$SYNC_COS" = true ]; then
+    print_header "Syncing to Tencent Cloud COS"
+    echo "Running: python scripts/sync_to_cos.py"
+    echo ""
+
+    python scripts/sync_to_cos.py
+
+    print_success "COS sync complete!"
+fi
+
 print_success "All steps completed successfully!"
