@@ -22,19 +22,18 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 import numpy as np
 
-# 复用现有模块
-from company_embedding import (
-    CompanyRecord, 
-    load_companies_from_csv, 
+# 从 core 模块导入共享数据类和工具函数
+from core import (
+    CompanyRecord,
+    CompanyProfile,
+    load_companies_from_csv,
     load_embeddings_npy,
-)
-from company_recommender import (
-    CompanyProfile, 
     load_company_profiles,
     HEAD_COMPANY_STAGES,
     DIMENSION_LABELS,
-    CompanyStageHeadSuppression,
 )
+# CompanyStageHeadSuppression 是推荐器专属逻辑，保留从 company_recommender 导入
+from company_recommender import CompanyStageHeadSuppression
 
 
 # ============================================================================

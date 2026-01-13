@@ -3,26 +3,36 @@
 Reranker CLI - LLM 精排
 
 使用 openai/gpt-5-mini via OpenRouter 对召回结果进行精排，
-从每个规则的 20 个候选中选择 top_k 个最相关的公司。
+从每个规则的 20 个候选中选择 1 到 max_k 个真正相关的公司。
+
+核心原则：宁缺毋滥
+- Reranker 作为质量把关者，筛选出真正有价值的关联公司
+- 如果关联过于牵强，会直接排除，不强行凑数
+- 最终选择数量可能少于 max_k
 
 Usage:
-    # 精排所有召回结果
+    # 精排所有召回结果（默认选择 1-5 家）
     python run_reranker.py \\
         --recall-results output_production/simple_recall/recall_results.json \\
         --output-dir output_production/article_generator/rerank_cache \\
-        --top-k 5 \\
         --skip-existing
+
+    # 自定义选择范围
+    python run_reranker.py \\
+        --recall-results output_production/simple_recall/recall_results.json \\
+        --min-k 2 --max-k 8 \\
+        --output-dir output_production/article_generator/rerank_cache
 
     # 精排指定公司
     python run_reranker.py \\
         --recall-results output_production/simple_recall/recall_results.json \\
         --company-ids cid_100 cid_101 \\
         --output-dir output_production/article_generator/rerank_cache
-        
-    # 使用 web search 缓存增强精排
+
+    # 使用 web search 缓存增强精排（缓存存储在 cache/web_search）
     python run_reranker.py \\
         --recall-results output_production/simple_recall/recall_results.json \\
-        --web-cache-dir output_production/article_generator/web_search_cache \\
+        --web-cache-dir cache/web_search \\
         --output-dir output_production/article_generator/rerank_cache
 """
 
@@ -79,7 +89,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--web-cache-dir",
         type=Path,
-        help="Web search cache directory (optional, enhances reranking)",
+        default=Path("cache/web_search"),
+        help="Web search cache directory (default: cache/web_search)",
     )
     parser.add_argument(
         "--company-ids",
@@ -92,10 +103,16 @@ def parse_args() -> argparse.Namespace:
         help="JSON file containing company IDs to rerank",
     )
     parser.add_argument(
-        "--top-k",
+        "--min-k",
+        type=int,
+        default=1,
+        help="Minimum number of companies to select per rule (default: 1)",
+    )
+    parser.add_argument(
+        "--max-k",
         type=int,
         default=5,
-        help="Number of companies to select per rule (default: 5)",
+        help="Maximum number of companies to select per rule (default: 5)",
     )
     parser.add_argument(
         "--delay",
@@ -115,11 +132,17 @@ def parse_args() -> argparse.Namespace:
         help="Model to use (default: openai/gpt-5-mini)",
     )
     parser.add_argument(
+        "--concurrency",
+        type=int,
+        default=20,
+        help="Number of parallel workers (default: 20, use 1 for sequential mode)",
+    )
+    parser.add_argument(
         "--quiet",
         action="store_true",
         help="Suppress progress output",
     )
-    
+
     return parser.parse_args()
 
 
@@ -187,20 +210,34 @@ def main():
     
     print(f"\nModel: {args.model}")
     print(f"Output: {args.output_dir}")
-    print(f"Top K: {args.top_k}")
+    print(f"Selection range: {args.min_k} to {args.max_k} companies per rule")
     print(f"Skip existing: {args.skip_existing}")
+    print(f"Concurrency: {args.concurrency}")
     print(f"\nReranking {total_tasks} tasks...")
-    
-    # 执行批量精排
-    results = reranker.batch_rerank(
-        recall_results=recall_results,
-        top_k=args.top_k,
-        delay_seconds=args.delay,
-        skip_existing=args.skip_existing,
-        cache_dir=args.output_dir,
-        web_search_cache=web_search_cache,
-        show_progress=not args.quiet,
-    )
+
+    # 执行批量精排（并发或顺序）
+    if args.concurrency > 1:
+        results = reranker.batch_rerank_concurrent(
+            recall_results=recall_results,
+            min_k=args.min_k,
+            max_k=args.max_k,
+            skip_existing=args.skip_existing,
+            cache_dir=args.output_dir,
+            web_search_cache=web_search_cache,
+            show_progress=not args.quiet,
+            concurrency=args.concurrency,
+        )
+    else:
+        results = reranker.batch_rerank(
+            recall_results=recall_results,
+            min_k=args.min_k,
+            max_k=args.max_k,
+            delay_seconds=args.delay,
+            skip_existing=args.skip_existing,
+            cache_dir=args.output_dir,
+            web_search_cache=web_search_cache,
+            show_progress=not args.quiet,
+        )
     
     # 统计结果
     success_count = sum(1 for r in results if r.selected_companies)
@@ -218,7 +255,8 @@ def main():
     metadata = {
         "run_at": datetime.now().isoformat(),
         "model": args.model,
-        "top_k": args.top_k,
+        "min_k": args.min_k,
+        "max_k": args.max_k,
         "recall_results_path": str(args.recall_results),
         "web_cache_used": bool(web_search_cache),
         "total_tasks": len(results),
