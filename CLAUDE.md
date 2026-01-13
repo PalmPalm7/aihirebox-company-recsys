@@ -136,6 +136,50 @@ When a company fails to generate articles through the normal pipeline, use manua
 - Script: `scripts/create_manual_rerank.py`
 - Documentation: `docs/manual_candidate_selection.md`
 
+## Validation & Troubleshooting
+
+### Validate Production Outputs
+After running the pipeline, validate that all companies have successful tagging and articles:
+```bash
+# Run validation
+python scripts/validate_production.py
+
+# Output as JSON (for programmatic use)
+python scripts/validate_production.py --json
+```
+
+The validation script checks:
+- **Tagging issues**: confidence=0, errors in reasoning, empty required fields
+- **Article issues**: missing companies, missing rules (R1, R3, R4)
+
+### Fix Failed Companies
+When validation finds issues, use the incremental fix script:
+```bash
+# Fix specific companies (runs all 6 stages)
+python scripts/fix_companies.py --company-ids cid_123 cid_124
+
+# Dry run - see what would be executed without running
+python scripts/fix_companies.py --company-ids cid_123 --dry-run
+
+# Skip stages if they're already correct
+python scripts/fix_companies.py --company-ids cid_123 --skip-tagging --skip-embedding
+
+# Use manual candidates instead of recall/rerank
+python scripts/fix_companies.py --company-ids cid_123 --skip-recall --skip-rerank
+```
+
+### Typical Troubleshooting Flow
+```bash
+# 1. Validate production outputs
+python scripts/validate_production.py
+
+# 2. Fix detected issues (copy command from validation output)
+python scripts/fix_companies.py --company-ids cid_123 cid_124 ...
+
+# 3. Re-validate to confirm fix
+python scripts/validate_production.py
+```
+
 ## Git Workflow
 
 **IMPORTANT**: Always create a new feature branch for commits. Never commit directly to `main` or `master`.
