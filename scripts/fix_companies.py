@@ -138,8 +138,8 @@ def main():
             "python", "run_tagging.py",
             str(company_csv),
             "--company-ids", *company_ids,
-            "--output", str(production_dir / "company_tagging"),
-            "--merge",
+            "--output-dir", str(production_dir / "company_tagging"),
+            "--merge", str(production_dir / "company_tagging"),
             "--no-reasoning"
         ]
         if not run_command(cmd, "Stage 1: Tagging", dry_run):
@@ -154,8 +154,8 @@ def main():
             "python", "run_embedding.py",
             str(company_csv),
             "--company-ids", *company_ids,
-            "--output", str(production_dir / "company_embedding"),
-            "--merge"
+            "--output-dir", str(production_dir / "company_embedding"),
+            "--merge", str(production_dir / "company_embedding")
         ]
         if not run_command(cmd, "Stage 2: Embedding", dry_run):
             all_success = False
@@ -168,6 +168,8 @@ def main():
         cmd = [
             "python", "run_simple_recommender.py",
             "--company-ids", *company_ids,
+            "--tags-json", str(production_dir / "company_tagging" / "company_tags.json"),
+            "--embeddings-dir", str(production_dir / "company_embedding"),
             "--output-dir", str(production_dir / "simple_recall")
         ]
         if not run_command(cmd, "Stage 3: Simple Recall", dry_run):
