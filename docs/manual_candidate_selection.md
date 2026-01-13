@@ -48,7 +48,7 @@ python scripts/create_manual_rerank.py
 ```
 
 This creates rerank cache files for each rule (R1, R3, R4) in:
-`outputs/output_production/article_generator/rerank_cache/cid_XXX_*.json`
+`outputs/production/article_generator/rerank_cache/cid_XXX_*.json`
 
 ### Step 4: Generate Articles
 
@@ -56,10 +56,10 @@ Run the article writer with the specific company ID:
 
 ```bash
 python run_article_writer.py \
-    --rerank-dir outputs/output_production/article_generator/rerank_cache \
+    --rerank-dir outputs/production/article_generator/rerank_cache \
     --web-cache-dir cache/web_search \
     --company-csv data/aihirebox_company_list.csv \
-    --output-dir outputs/output_production/article_generator/articles \
+    --output-dir outputs/production/article_generator/articles \
     --company-ids cid_143 \
     --styles 36kr \
     --concurrency 1

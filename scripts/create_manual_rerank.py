@@ -90,7 +90,7 @@ def main():
     # 路径配置
     project_root = Path(__file__).parent.parent
     csv_path = project_root / "data" / "aihirebox_company_list.csv"
-    output_dir = project_root / "outputs" / "output_production" / "article_generator" / "rerank_cache"
+    output_dir = project_root / "outputs" / "production" / "article_generator" / "rerank_cache"
 
     # 确保输出目录存在
     output_dir.mkdir(parents=True, exist_ok=True)
