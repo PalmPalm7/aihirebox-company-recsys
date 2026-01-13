@@ -33,6 +33,39 @@ DIMENSION_LABELS = {
     "team_background": "团队背景",
 }
 
+# Default taxonomy path
+DEFAULT_TAXONOMY_PATH = Path(__file__).parent.parent / "tag_taxonomy.json"
+
+
+def load_taxonomy(taxonomy_path: Path = DEFAULT_TAXONOMY_PATH) -> Dict[str, Dict[str, str]]:
+    """
+    加载标签分类体系，返回 {dimension: {en_tag: zh_label}} 的映射
+    """
+    if not taxonomy_path.exists():
+        print(f"Warning: Taxonomy file not found: {taxonomy_path}")
+        return {}
+
+    with open(taxonomy_path, "r", encoding="utf-8") as f:
+        taxonomy = json.load(f)
+
+    # Build flat mapping: {dimension: {en_key: zh_label}}
+    mapping = {}
+    for dimension, config in taxonomy.items():
+        mapping[dimension] = config.get("options", {})
+
+    return mapping
+
+
+def build_company_mapping(company_tags: List[Dict]) -> Dict[str, str]:
+    """
+    构建公司ID到公司名的映射表
+    """
+    return {
+        c.get("company_id"): c.get("company_name", c.get("company_id"))
+        for c in company_tags
+        if c.get("company_id")
+    }
+
 
 def calculate_gini(values: List[int]) -> float:
     """
@@ -111,15 +144,20 @@ def load_articles(articles_dir: Path) -> List[Dict]:
     return results
 
 
-def compute_tag_distributions(company_tags: List[Dict]) -> Dict[str, Any]:
+def compute_tag_distributions(
+    company_tags: List[Dict],
+    taxonomy: Dict[str, Dict[str, str]]
+) -> Dict[str, Any]:
     """
     指标1: 计算6个维度的标签分布
+    使用taxonomy将英文标签转换为中文
     """
     total_companies = len(company_tags)
     distributions = {}
 
     for field, label in DIMENSION_LABELS.items():
         counter = Counter()
+        tag_mapping = taxonomy.get(field, {})
 
         for company in company_tags:
             value = company.get(field, [])
@@ -131,9 +169,11 @@ def compute_tag_distributions(company_tags: List[Dict]) -> Dict[str, Any]:
                 counter[value] += 1
 
         # Convert to distribution with count and percentage
+        # Use Chinese labels from taxonomy
         dist = {}
         for tag, count in counter.most_common():
-            dist[tag] = {
+            zh_label = tag_mapping.get(tag, tag)  # Fallback to English if not found
+            dist[zh_label] = {
                 "数量": count,
                 "占比": round(count / total_companies * 100, 1) if total_companies > 0 else 0
             }
@@ -149,7 +189,8 @@ def compute_tag_distributions(company_tags: List[Dict]) -> Dict[str, Any]:
 def compute_recommendation_health(
     rerank_results: List[Dict],
     articles: List[Dict],
-    company_tags: List[Dict]
+    company_tags: List[Dict],
+    company_mapping: Dict[str, str]
 ) -> Dict[str, Any]:
     """
     指标2: 推荐生态健康度
@@ -196,9 +237,12 @@ def compute_recommendation_health(
     all_counts = [candidate_counts.get(cid, 0) for cid in all_company_ids]
     overall_gini = calculate_gini(all_counts)
 
-    # Top 10 most recommended
+    # Top 10 most recommended - use company names
     top_10 = [
-        {"公司ID": cid, "被推荐次数": count}
+        {
+            "公司名称": company_mapping.get(cid, cid),
+            "被推荐次数": count
+        }
         for cid, count in candidate_counts.most_common(10)
     ]
 
@@ -316,14 +360,21 @@ def generate_analytics(production_dir: Path) -> Dict[str, Any]:
     company_tags = load_company_tags(tags_path)
     rerank_results = load_rerank_cache(rerank_dir)
     articles = load_articles(articles_dir)
+    taxonomy = load_taxonomy()
 
     print(f"Loaded {len(company_tags)} companies")
     print(f"Loaded {len(rerank_results)} rerank results")
     print(f"Loaded {len(articles)} articles")
+    print(f"Loaded taxonomy with {len(taxonomy)} dimensions")
+
+    # Build company ID -> name mapping
+    company_mapping = build_company_mapping(company_tags)
 
     # Compute metrics
-    tag_distributions = compute_tag_distributions(company_tags)
-    recommendation_health = compute_recommendation_health(rerank_results, articles, company_tags)
+    tag_distributions = compute_tag_distributions(company_tags, taxonomy)
+    recommendation_health = compute_recommendation_health(
+        rerank_results, articles, company_tags, company_mapping
+    )
     article_candidates = compute_article_candidates(articles)
 
     return {
@@ -333,6 +384,7 @@ def generate_analytics(production_dir: Path) -> Dict[str, Any]:
             "精排结果数": len(rerank_results),
             "文章总数": len(articles)
         },
+        "公司列表": company_mapping,
         "标签分布": tag_distributions,
         "推荐生态健康度": recommendation_health,
         "文章关联公司统计": article_candidates
