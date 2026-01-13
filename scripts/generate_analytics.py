@@ -246,6 +246,15 @@ def compute_recommendation_health(
         for cid, count in candidate_counts.most_common(10)
     ]
 
+    # Full detail list - all companies with their recommendation counts (sorted desc)
+    full_detail = [
+        {
+            "公司名称": company_mapping.get(cid, cid),
+            "被推荐次数": candidate_counts.get(cid, 0)
+        }
+        for cid in sorted(all_company_ids, key=lambda x: candidate_counts.get(x, 0), reverse=True)
+    ]
+
     # 2b. 候选重叠度 - 同一公司不同规则的candidates是否相似
     company_rule_candidates = defaultdict(dict)  # query_company_id -> {rule_id: set(candidate_ids)}
 
@@ -294,7 +303,8 @@ def compute_recommendation_health(
             "基尼系数": round(overall_gini, 3),
             "前10被推荐公司": top_10,
             "从未被推荐公司数": len(never_recommended),
-            "频率分布": freq_distribution
+            "频率分布": freq_distribution,
+            "详情": full_detail
         },
         "候选重叠度": {
             "平均Jaccard相似度": avg_jaccard,
