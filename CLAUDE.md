@@ -141,16 +141,19 @@ When a company fails to generate articles through the normal pipeline, use manua
 ### Validate Production Outputs
 After running the pipeline, validate that all companies have successful tagging and articles:
 ```bash
-# Run validation
+# Run validation (default: outputs/production)
 python scripts/validate_production.py
+
+# Specify custom production directory
+python scripts/validate_production.py --production-dir outputs/production
 
 # Output as JSON (for programmatic use)
 python scripts/validate_production.py --json
 ```
 
 The validation script checks:
-- **Tagging issues**: confidence=0, errors in reasoning, empty required fields
-- **Article issues**: missing companies, missing rules (R1, R3, R4)
+- **Tagging issues**: Error in reasoning OR (confidence=0 with all empty fields)
+- **Article issues**: Company completely missing from articles index
 
 ### Fix Failed Companies
 When validation finds issues, use the incremental fix script:
@@ -166,6 +169,9 @@ python scripts/fix_companies.py --company-ids cid_123 --skip-tagging --skip-embe
 
 # Use manual candidates instead of recall/rerank
 python scripts/fix_companies.py --company-ids cid_123 --skip-recall --skip-rerank
+
+# Specify custom production directory
+python scripts/fix_companies.py --company-ids cid_123 --production-dir outputs/production
 ```
 
 ### Typical Troubleshooting Flow
