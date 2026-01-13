@@ -130,3 +130,75 @@ cache/
 ```
 
 Production outputs (`outputs/production/`) contain: `company_tagging/`, `company_embedding/`, `simple_recall/`, `article_generator/`.
+
+### Manual Candidate Selection
+When a company fails to generate articles through the normal pipeline, use manual candidate selection:
+- Script: `scripts/create_manual_rerank.py`
+- Documentation: `docs/manual_candidate_selection.md`
+
+## Validation & Troubleshooting
+
+### Validate Production Outputs
+After running the pipeline, validate that all companies have successful tagging and articles:
+```bash
+# Run validation (default: outputs/production)
+python scripts/validate_production.py
+
+# Specify custom production directory
+python scripts/validate_production.py --production-dir outputs/production
+
+# Output as JSON (for programmatic use)
+python scripts/validate_production.py --json
+```
+
+The validation script checks:
+- **Tagging issues**: Error in reasoning OR (confidence=0 with all empty fields)
+- **Article issues**: Company completely missing from articles index
+
+### Fix Failed Companies
+When validation finds issues, use the incremental fix script:
+```bash
+# Fix specific companies (runs all 6 stages)
+python scripts/fix_companies.py --company-ids cid_123 cid_124
+
+# Dry run - see what would be executed without running
+python scripts/fix_companies.py --company-ids cid_123 --dry-run
+
+# Skip stages if they're already correct
+python scripts/fix_companies.py --company-ids cid_123 --skip-tagging --skip-embedding
+
+# Use manual candidates instead of recall/rerank
+python scripts/fix_companies.py --company-ids cid_123 --skip-recall --skip-rerank
+
+# Specify custom production directory
+python scripts/fix_companies.py --company-ids cid_123 --production-dir outputs/production
+```
+
+### Typical Troubleshooting Flow
+```bash
+# 1. Validate production outputs
+python scripts/validate_production.py
+
+# 2. Fix detected issues (copy command from validation output)
+python scripts/fix_companies.py --company-ids cid_123 cid_124 ...
+
+# 3. Re-validate to confirm fix
+python scripts/validate_production.py
+```
+
+## Git Workflow
+
+**IMPORTANT**: Always create a new feature branch for commits. Never commit directly to `main` or `master`.
+
+```bash
+# Create a new branch for your changes
+git checkout -b feature/your-feature-name
+
+# After making changes, commit and push
+git add .
+git commit -m "Your commit message"
+git push -u origin feature/your-feature-name
+
+# Create a PR via GitHub CLI
+gh pr create --title "Your PR title" --body "Description"
+```

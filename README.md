@@ -189,7 +189,45 @@ For detailed documentation, see:
 
 - [Full Pipeline Guide](docs/README_FULL.md) - Complete scenarios and commands
 - [CLAUDE.md](CLAUDE.md) - Developer guide for AI assistants
+- [Manual Candidate Selection](docs/manual_candidate_selection.md) - How to manually specify candidates for article generation
 - [Xiaohongshu Style Retrospective](docs/xiaohongshu_style_retrospective.md) - Why "真人视角" LLM generation doesn't work
+
+## Troubleshooting
+
+### Validate Production Outputs
+After running the pipeline, check for failed tagging or missing articles:
+```bash
+python scripts/validate_production.py
+```
+
+### Fix Failed Companies
+When validation finds issues, use the incremental fix script:
+```bash
+# Fix specific companies (command shown in validation output)
+python scripts/fix_companies.py --company-ids cid_123 cid_124
+
+# Dry run to see what would be executed
+python scripts/fix_companies.py --company-ids cid_123 --dry-run
+```
+
+See [CLAUDE.md](CLAUDE.md) for detailed troubleshooting commands.
+
+## Git Workflow
+
+**IMPORTANT**: Always create a new feature branch for commits. Never commit directly to `main` or `master`.
+
+```bash
+# Create a new branch for your changes
+git checkout -b feature/your-feature-name
+
+# After making changes, commit and push
+git add .
+git commit -m "Your commit message"
+git push -u origin feature/your-feature-name
+
+# Create a PR via GitHub CLI
+gh pr create --title "Your PR title" --body "Description"
+```
 
 ## Architecture Improvements
 

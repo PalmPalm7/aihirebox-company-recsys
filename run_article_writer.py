@@ -338,29 +338,51 @@ def main():
             "generated_at": a.generated_at,
         })
     
-    # 保存详细的 index
+    # 保存详细的 index（支持增量合并）
+    index_file = args.output_dir / "index.json"
+
+    # 加载现有 index（如果存在）
+    existing_companies = {}
+    if index_file.exists():
+        try:
+            with open(index_file, "r", encoding="utf-8") as f:
+                existing_index = json.load(f)
+                existing_companies = existing_index.get("companies", {})
+            print(f"\nLoaded existing index with {len(existing_companies)} companies")
+        except (json.JSONDecodeError, KeyError):
+            print(f"\nWarning: Could not load existing index, creating new one")
+
+    # 合并：新生成的公司覆盖现有记录
+    merged_companies = existing_companies.copy()
+    for cid, data in companies_index.items():
+        merged_companies[cid] = data
+
+    print(f"Merged: {len(companies_index)} new/updated + {len(existing_companies)} existing = {len(merged_companies)} total")
+
+    # 计算合并后的统计
+    total_articles = sum(len(c.get("articles", [])) for c in merged_companies.values())
+
     index = {
         "run_at": datetime.now().isoformat(),
         "model": args.model,
         "stats": {
-            "total_articles": len(articles),
+            "total_articles": total_articles,
             "successful": success_count,
             "failed": failed_count,
             "styles": list(style_stats.keys()),
             "style_breakdown": style_stats,
-            "companies_count": len(companies_index),
+            "companies_count": len(merged_companies),
         },
         "output_dirs": {
             "json": "json/",
             "markdown": "markdown/",
         },
-        "companies": companies_index,
+        "companies": merged_companies,
     }
-    
-    index_file = args.output_dir / "index.json"
+
     with open(index_file, "w", encoding="utf-8") as f:
         json.dump(index, f, ensure_ascii=False, indent=2)
-    
+
     print(f"\nIndex saved: {index_file}")
     
     return 0
