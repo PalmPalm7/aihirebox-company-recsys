@@ -97,13 +97,8 @@ class CompanyTags:
     raw_reasoning: str = ""
 
 
-@dataclass 
-class CompanyRecord:
-    """Raw company record from CSV."""
-    company_id: str
-    company_name: str
-    location: str
-    company_details: str
+# Re-export from core for backward compatibility
+from core import CompanyRecord, load_companies_from_csv as _load_csv
 
 
 # ============================================================================
@@ -374,19 +369,12 @@ JSON格式示例：
 # ============================================================================
 
 def load_companies_from_csv(csv_path: Path) -> List[CompanyRecord]:
-    """Load company records from CSV file."""
-    companies = []
-    # Use utf-8-sig to handle BOM (byte order mark) if present
-    with open(csv_path, "r", encoding="utf-8-sig") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            companies.append(CompanyRecord(
-                company_id=row.get("company_id", ""),
-                company_name=row.get("company_name", ""),
-                location=row.get("location", ""),
-                company_details=row.get("company_details", ""),
-            ))
-    return companies
+    """Load company records from CSV file.
+
+    Note: This function delegates to core.load_companies_from_csv for consistency.
+    Kept here for backward compatibility.
+    """
+    return _load_csv(csv_path)
 
 
 def save_results_csv(results: List[CompanyTags], output_path: Path) -> None:

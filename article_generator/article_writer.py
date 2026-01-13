@@ -234,12 +234,22 @@ JSON格式，三个字段：
         rerank_result: RerankResult,
         style_id: str,
     ) -> Article:
-        """解析文章生成响应"""
+        """解析文章生成响应
+
+        对于 xiaohongshu 风格，响应格式为:
+        {
+            "config": {...},
+            "article": {"title": ..., "content": ..., "key_takeaways": [...]}
+        }
+
+        对于其他风格，响应格式为:
+        {"title": ..., "content": ..., "key_takeaways": [...]}
+        """
         # 提取所有候选公司 ID
         candidate_company_ids = [
             sc.company_id for sc in rerank_result.selected_companies
         ]
-        
+
         try:
             # 尝试提取 JSON
             json_text = response_text
@@ -247,7 +257,7 @@ JSON格式，三个字段：
                 json_text = response_text.split("```json")[1].split("```")[0]
             elif "```" in response_text:
                 json_text = response_text.split("```")[1].split("```")[0]
-            
+
             data = json.loads(json_text.strip())
         except (json.JSONDecodeError, IndexError):
             # 解析失败，尝试直接使用响应文本
@@ -263,20 +273,30 @@ JSON格式，三个字段：
                 key_takeaways=[],
                 citations=[],
             )
-        
-        content = data.get("content", "")
-        
+
+        # 处理 xiaohongshu 的 config + article 嵌套格式
+        style_config = None
+        if style_id == "xiaohongshu" and "config" in data and "article" in data:
+            style_config = data.get("config", {})
+            article_data = data.get("article", {})
+        else:
+            # 其他风格直接使用 data
+            article_data = data
+
+        content = article_data.get("content", "")
+
         return Article(
             query_company_id=rerank_result.query_company_id,
             query_company_name=rerank_result.query_company_name,
             rule_id=rerank_result.rule_id,
             style=style_id,
-            title=data.get("title", "无标题"),
+            title=article_data.get("title", "无标题"),
             content=content,
             word_count=len(content),
             candidate_company_ids=candidate_company_ids,
-            key_takeaways=data.get("key_takeaways", []),
+            key_takeaways=article_data.get("key_takeaways", []),
             citations=self._extract_citations(content),
+            style_config=style_config,
         )
     
     def _extract_citations(self, text: str) -> List[str]:
@@ -432,27 +452,34 @@ JSON格式，三个字段：
             if output_dir:
                 output_dir.mkdir(parents=True, exist_ok=True)
                 output_file = output_dir / filename
+                json_data = {
+                    "query_company_id": article.query_company_id,
+                    "query_company_name": article.query_company_name,
+                    "rule_id": article.rule_id,
+                    "style": article.style,
+                    "title": article.title,
+                    "content": article.content,
+                    "word_count": article.word_count,
+                    "candidate_company_ids": article.candidate_company_ids,
+                    "key_takeaways": article.key_takeaways,
+                    "citations": article.citations,
+                    "generated_at": article.generated_at,
+                }
+                if article.style_config:
+                    json_data["style_config"] = article.style_config
                 with open(output_file, "w", encoding="utf-8") as f:
-                    json.dump({
-                        "query_company_id": article.query_company_id,
-                        "query_company_name": article.query_company_name,
-                        "rule_id": article.rule_id,
-                        "style": article.style,
-                        "title": article.title,
-                        "content": article.content,
-                        "word_count": article.word_count,
-                        "candidate_company_ids": article.candidate_company_ids,
-                        "key_takeaways": article.key_takeaways,
-                        "citations": article.citations,
-                        "generated_at": article.generated_at,
-                    }, f, ensure_ascii=False, indent=2)
-                
+                    json.dump(json_data, f, ensure_ascii=False, indent=2)
+
                 # 同时保存 markdown 版本
                 md_file = output_dir / filename.replace(".json", ".md")
                 with open(md_file, "w", encoding="utf-8") as f:
                     f.write(f"# {article.title}\n\n")
                     f.write(f"> 风格: {article.style} | 规则: {article.rule_id}\n")
-                    f.write(f"> 推荐公司: {', '.join(article.candidate_company_ids)}\n\n")
+                    f.write(f"> 推荐公司: {', '.join(article.candidate_company_ids)}\n")
+                    if article.style_config:
+                        config_str = " | ".join([f"{k}: {v}" for k, v in article.style_config.items()])
+                        f.write(f"> 配置: {config_str}\n")
+                    f.write("\n")
                     f.write(article.content)
                     if article.key_takeaways:
                         f.write("\n\n---\n\n## 核心要点\n\n")
@@ -503,27 +530,36 @@ JSON格式，三个字段：
             
             # 保存 JSON 版本
             json_file = json_dir / f"{base_filename}.json"
+            json_data = {
+                "query_company_id": article.query_company_id,
+                "query_company_name": article.query_company_name,
+                "rule_id": article.rule_id,
+                "style": article.style,
+                "title": article.title,
+                "content": article.content,
+                "word_count": article.word_count,
+                "candidate_company_ids": article.candidate_company_ids,
+                "key_takeaways": article.key_takeaways,
+                "citations": article.citations,
+                "generated_at": article.generated_at,
+            }
+            # 小红书风格：保存 config 元数据
+            if article.style_config:
+                json_data["style_config"] = article.style_config
             with open(json_file, "w", encoding="utf-8") as f:
-                json.dump({
-                    "query_company_id": article.query_company_id,
-                    "query_company_name": article.query_company_name,
-                    "rule_id": article.rule_id,
-                    "style": article.style,
-                    "title": article.title,
-                    "content": article.content,
-                    "word_count": article.word_count,
-                    "candidate_company_ids": article.candidate_company_ids,
-                    "key_takeaways": article.key_takeaways,
-                    "citations": article.citations,
-                    "generated_at": article.generated_at,
-                }, f, ensure_ascii=False, indent=2)
+                json.dump(json_data, f, ensure_ascii=False, indent=2)
             
             # 保存 Markdown 版本
             md_file = md_dir / f"{base_filename}.md"
             with open(md_file, "w", encoding="utf-8") as f:
                 f.write(f"# {article.title}\n\n")
                 f.write(f"> 风格: {article.style} | 规则: {article.rule_id}\n")
-                f.write(f"> 推荐公司: {', '.join(article.candidate_company_ids)}\n\n")
+                f.write(f"> 推荐公司: {', '.join(article.candidate_company_ids)}\n")
+                # 小红书风格：显示采样配置
+                if article.style_config:
+                    config_str = " | ".join([f"{k}: {v}" for k, v in article.style_config.items()])
+                    f.write(f"> 配置: {config_str}\n")
+                f.write("\n")
                 f.write(article.content)
                 if article.key_takeaways:
                     f.write("\n\n---\n\n## 核心要点\n\n")

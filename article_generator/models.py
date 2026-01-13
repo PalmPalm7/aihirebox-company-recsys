@@ -71,7 +71,9 @@ class Article:
     key_takeaways: List[str] = field(default_factory=list)
     citations: List[str] = field(default_factory=list)
     generated_at: str = ""
-    
+    # 小红书 config-based 生成的配置元数据
+    style_config: Optional[Dict[str, str]] = None
+
     def __post_init__(self):
         if not self.generated_at:
             self.generated_at = datetime.now().isoformat()

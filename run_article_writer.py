@@ -12,7 +12,7 @@ Usage:
     # 生成所有风格的文章（默认 5 并发）
     python run_article_writer.py \\
         --rerank-dir output_production/article_generator/rerank_cache \\
-        --web-cache-dir output_production/article_generator/web_search_cache \\
+        --web-cache-dir cache/web_search \\
         --output-dir output_production/article_generator/articles \\
         --styles 36kr huxiu xiaohongshu linkedin zhihu
 
@@ -132,8 +132,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--web-cache-dir",
         type=Path,
-        default=Path("output_production/article_generator/web_search_cache"),
-        help="Web search cache directory",
+        default=Path("cache/web_search"),
+        help="Web search cache directory (default: cache/web_search)",
     )
     parser.add_argument(
         "--company-csv",
@@ -167,8 +167,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--concurrency",
         type=int,
-        default=5,
-        help="Number of parallel workers (default: 5, use 1 for sequential mode)",
+        default=20,
+        help="Number of parallel workers (default: 20, use 1 for sequential mode)",
     )
     parser.add_argument(
         "--skip-existing",

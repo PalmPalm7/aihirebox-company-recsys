@@ -36,16 +36,11 @@ RETRY_DELAY = 1.0  # seconds
 
 
 # ============================================================================
-# Data Classes
+# Data Classes (CompanyRecord imported from core for deduplication)
 # ============================================================================
 
-@dataclass
-class CompanyRecord:
-    """Raw company record from CSV."""
-    company_id: str
-    company_name: str
-    location: str
-    company_details: str
+# Re-export from core for backward compatibility
+from core import CompanyRecord, load_companies_from_csv as _load_csv, load_embeddings_npy as _load_npy
 
 
 @dataclass
@@ -359,20 +354,12 @@ class CompanyEmbedder:
 # ============================================================================
 
 def load_companies_from_csv(csv_path: Path) -> List[CompanyRecord]:
-    """Load company records from CSV file."""
-    import csv
-    
-    companies = []
-    with open(csv_path, "r", encoding="utf-8-sig") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            companies.append(CompanyRecord(
-                company_id=row.get("company_id", ""),
-                company_name=row.get("company_name", ""),
-                location=row.get("location", ""),
-                company_details=row.get("company_details", ""),
-            ))
-    return companies
+    """Load company records from CSV file.
+
+    Note: This function delegates to core.load_companies_from_csv for consistency.
+    Kept here for backward compatibility.
+    """
+    return _load_csv(csv_path)
 
 
 def save_embeddings_csv(
@@ -447,19 +434,14 @@ def save_embeddings_npy(results: List[CompanyEmbedding], output_path: Path) -> N
 
 def load_embeddings_npy(npy_path: Path) -> Tuple[Any, Dict[str, int]]:
     """Load embeddings from NumPy file with mapping.
-    
+
+    Note: This function delegates to core.load_embeddings_npy for consistency.
+    Kept here for backward compatibility.
+
     Returns:
         Tuple of (numpy array, company_id to index mapping)
     """
-    import numpy as np
-    
-    embeddings = np.load(npy_path)
-    mapping_path = npy_path.with_suffix(".mapping.json")
-    
-    with open(mapping_path, "r", encoding="utf-8") as f:
-        mapping = json.load(f)
-    
-    return embeddings, mapping
+    return _load_npy(npy_path)
 
 
 def load_jina_api_key() -> str:
