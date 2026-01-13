@@ -113,6 +113,11 @@ def main():
         default=10,
         help="Concurrency for parallel operations (default: 10)"
     )
+    parser.add_argument(
+        "--sync-cos",
+        action="store_true",
+        help="Sync outputs to Tencent Cloud COS after completion"
+    )
 
     args = parser.parse_args()
 
@@ -233,6 +238,12 @@ def main():
             print("Warning: Article generation failed")
     else:
         print("\n[SKIP] Stage 6: Article Generation (--skip-articles)")
+
+    # Optional: Sync to COS
+    if args.sync_cos and all_success and not dry_run:
+        cmd = ["python", "scripts/sync_to_cos.py"]
+        if not run_command(cmd, "Syncing to COS", dry_run):
+            print("Warning: COS sync failed")
 
     # Summary
     print("\n" + "=" * 60)

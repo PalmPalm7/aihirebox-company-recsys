@@ -55,6 +55,9 @@ cp .env.example .env
 # Incremental mode (only process new companies)
 ./run_full_pipeline.sh --incremental
 
+# Sync outputs to Tencent Cloud COS
+./run_full_pipeline.sh --sync-cos
+
 # Show help
 ./run_full_pipeline.sh --help
 ```

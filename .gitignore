@@ -30,6 +30,9 @@ output/
 output_production/
 outputs/
 
+# Cache folders
+cache/
+
 # Test folder - ignore test outputs and fixtures
 tests/fixtures/*
 tests/*.png
